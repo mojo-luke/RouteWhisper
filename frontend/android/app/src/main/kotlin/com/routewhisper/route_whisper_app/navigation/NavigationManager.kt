@@ -132,119 +132,54 @@ class NavigationManager(
         }
     }
     
-    // ===== ROUTE SIMULATION METHODS =====
+    // ===== ROUTE SIMULATION =====
     
+    private lateinit var navigationSimulator: NavigationSimulator
+
+    private fun initializeSimulator() {
+        navigationSimulator = NavigationSimulator(
+            mapViewManager = mapViewManager!!
+        ) {
+            // Called when simulation completes
+            setState(NavigationState.COMPLETED)
+        }
+    }
+
     private fun startRouteSimulation() {
         if (config.enableSimulation && currentRoutes.isNotEmpty()) {
             Log.d(TAG, "Starting route simulation")
             
-            val primaryRoute = currentRoutes.first()
-            
             try {
+                // Initialize simulator if needed
+                if (!::navigationSimulator.isInitialized) {
+                    initializeSimulator()
+                }
+                
                 // 1. Set navigation routes
-                Log.d(TAG, "Setting navigation routes for simulation")
                 mapboxNavigation.setNavigationRoutes(currentRoutes)
                 
-                // 2. DISABLE conflicting location systems for manual simulation
-                Log.d(TAG, "Disabling conflicting location observers for manual simulation")
+                // 2. Disable conflicting location observers
                 mapboxNavigation.unregisterLocationObserver(locationTracker.locationObserver)
                 
-                // 3. Don't start trip session - this prevents LocationObserver conflicts
-                Log.d(TAG, "Skipping trip session to avoid location conflicts")
-                
-                // 4. Start manual simulation
-                Log.d(TAG, "Starting manual location simulation")
-                startManualLocationSimulation(primaryRoute)
+                // 3. Start simulation
+                navigationSimulator.startSimulation(currentRoutes.first())
                 
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to start route simulation", e)
             }
-        } else {
-            Log.w(TAG, "Cannot start simulation: routes empty=${currentRoutes.isEmpty()} or simulation disabled=${!config.enableSimulation}")
         }
-    }
-
-    // Manual simulation using route coordinates
-    private fun startManualLocationSimulation(route: NavigationRoute) {
-        try {
-            // Get the route geometry points
-            val routePoints = route.directionsRoute.geometry()?.let { geometry ->
-                com.mapbox.geojson.utils.PolylineUtils.decode(geometry, 6)
-            } ?: emptyList()
-            
-            Log.d(TAG, "Manual simulation: Found ${routePoints.size} route points")
-            
-            if (routePoints.isNotEmpty()) {
-                // Log first few points for debugging
-                routePoints.take(5).forEachIndexed { index, point ->
-                    Log.d(TAG, "Route point $index: ${point.latitude()}, ${point.longitude()}")
-                }
-                
-                // Set initial camera focus and following mode ONCE
-                mapViewManager?.setInitialFocus(routePoints[0].latitude(), routePoints[0].longitude())
-                
-                // Start stepping through the points
-                simulateLocationAlongRoute(routePoints, 0)
-            } else {
-                Log.e(TAG, "No route points found for manual simulation")
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to start manual location simulation", e)
-        }
-    }
-
-    // Simulate movement along route points
-    private fun simulateLocationAlongRoute(routePoints: List<com.mapbox.geojson.Point>, currentIndex: Int) {
-        if (currentIndex >= routePoints.size || !isNavigating()) {
-            Log.d(TAG, "Manual simulation completed or navigation stopped")
-            setState(NavigationState.COMPLETED)
-            return
-        }
-        
-        val point = routePoints[currentIndex]
-        val bearing = calculateBearing(routePoints, currentIndex)
-        
-        Log.d(TAG, "🚗 Manual simulation step $currentIndex: ${point.latitude()}, ${point.longitude()}")
-        
-        // Use the updated direct method (no forced camera focus)
-        mapViewManager?.updateLocationDirectly(point.latitude(), point.longitude(), bearing)
-        
-        // Schedule next update
-        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-            simulateLocationAlongRoute(routePoints, currentIndex + 3) // Skip 3 points for moderate speed
-        }, 1500) // 1.5 second intervals
-    }
-
-    // Calculate bearing between points
-    private fun calculateBearing(points: List<com.mapbox.geojson.Point>, currentIndex: Int): Double {
-        if (currentIndex + 1 >= points.size) return 0.0
-        
-        val current = points[currentIndex]
-        val next = points[currentIndex + 1]
-        
-        val lat1 = Math.toRadians(current.latitude())
-        val lat2 = Math.toRadians(next.latitude())
-        val deltaLng = Math.toRadians(next.longitude() - current.longitude())
-        
-        val y = Math.sin(deltaLng) * Math.cos(lat2)
-        val x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(deltaLng)
-        
-        return Math.toDegrees(Math.atan2(y, x))
     }
 
     private fun stopRouteSimulation() {
-        if (config.enableSimulation) {
+        if (config.enableSimulation && ::navigationSimulator.isInitialized) {
             Log.d(TAG, "Stopping route simulation")
+            navigationSimulator.stopSimulation()
+            
+            // Re-enable location observer
             try {
-                // Clear any scheduled updates
-                android.os.Handler(android.os.Looper.getMainLooper()).removeCallbacksAndMessages(null)
-                
-                // Re-enable location observer if needed
-                Log.d(TAG, "Re-registering location observer")
                 mapboxNavigation.registerLocationObserver(locationTracker.locationObserver)
-                
             } catch (e: Exception) {
-                Log.e(TAG, "Error stopping simulation", e)
+                Log.e(TAG, "Error re-registering location observer", e)
             }
         }
     }
@@ -303,6 +238,11 @@ class NavigationManager(
     fun setMapComponents(mapViewManager: MapViewManager, routeLineRenderer: RouteLineRenderer) {
         this.mapViewManager = mapViewManager
         this.routeLineRenderer = routeLineRenderer
+        
+        // Initialize simulator now that we have mapViewManager
+        if (config.enableSimulation) {
+            initializeSimulator()
+        }
     }
     
     // ===== EXISTING MAPBOX NAVIGATION INTEGRATION =====
