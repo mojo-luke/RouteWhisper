@@ -1,0 +1,162 @@
+# OS Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE Files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment & Secrets
+.env
+.env.local
+.env.*.local
+*.log
+logs/
+
+# Backend (Python/FastAPI)
+backend/__pycache__/
+backend/*.py[cod]
+backend/*$py.class
+backend/*.so
+backend/.Python
+backend/build/
+backend/develop-eggs/
+backend/dist/
+backend/downloads/
+backend/eggs/
+backend/.eggs/
+backend/lib/
+backend/lib64/
+backend/parts/
+backend/sdist/
+backend/var/
+backend/wheels/
+backend/share/python-wheels/
+backend/*.egg-info/
+backend/.installed.cfg
+backend/*.egg
+backend/MANIFEST
+backend/.pytest_cache/
+backend/.coverage
+backend/htmlcov/
+backend/.tox/
+backend/.nox/
+backend/.coverage
+backend/.pytest_cache/
+backend/cover/
+backend/*.cover
+backend/*.py,cover
+backend/.hypothesis/
+backend/venv/
+backend/env/
+backend/ENV/
+backend/env.bak/
+backend/venv.bak/
+
+# Frontend (Flutter)
+frontend/.dart_tool/
+frontend/.flutter-plugins
+frontend/.flutter-plugins-dependencies
+frontend/.packages
+frontend/.pub-cache/
+frontend/.pub/
+frontend/build/
+frontend/flutter_*.png
+frontend/linked_*.ds
+frontend/unlinked.ds
+frontend/unlinked_spec.ds
+
+# Flutter/Android
+frontend/android/.gradle
+frontend/android/captures/
+frontend/android/gradlew
+frontend/android/gradlew.bat
+frontend/android/local.properties
+frontend/android/app/*.keystore
+frontend/android/key.properties
+
+# Flutter/iOS
+frontend/ios/*.mode1v3
+frontend/ios/*.mode2v3
+frontend/ios/*.moved-aside
+frontend/ios/*.pbxuser
+frontend/ios/*.perspectivev3
+frontend/ios/**/*sync/
+frontend/ios/.sconsign.dblite
+frontend/ios/.tags*
+frontend/ios/**/.vagrant/
+frontend/ios/**/DerivedData/
+frontend/ios/*.hmap
+frontend/ios/*.ipa
+frontend/ios/*.xcarchive
+frontend/ios/Pods/
+frontend/ios/.symlinks/
+frontend/ios/Flutter/Flutter.framework
+frontend/ios/Flutter/Flutter.podspec
+
+# Web
+frontend/web/
+
+# Windows
+frontend/windows/flutter/generated_plugin_registrant.cc
+frontend/windows/flutter/generated_plugin_registrant.h
+
+# Coverage
+frontend/coverage/
+
+# Symbols
+frontend/app.*.symbols
+
+# Obfuscation related
+frontend/app.*.map.json
+
+# Mapbox Tokens (IMPORTANT - Keep tokens secure)
+**/mapbox_access_token.xml
+**/*mapbox*token*
+**/*MAPBOX*TOKEN*
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Temporary files
+*.tmp
+*.temp
+temp/
+tmp/
+
+# Compiled files
+*.com
+*.class
+*.dll
+*.exe
+*.o
+*.so
+
+# Packages
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.zip
+
+# Version control
+.svn/
+
+# Node modules (if any)
+node_modules/
+
+# Generated documentation
+docs/_build/ 
