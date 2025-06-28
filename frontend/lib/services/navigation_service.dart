@@ -1,17 +1,10 @@
 import 'package:flutter/services.dart';
+import 'navigation_controller.dart';
 
-// Navigation state enum (top-level, not inside class)
-enum NavigationState {
-  idle,
-  calculating,
-  ready,
-  navigating,
-  paused,
-  completed,
-  cancelled,
-}
+// Export everything from navigation_controller for easier imports
+export 'navigation_controller.dart';
 
-// Add route information tracking
+// Add route information tracking (keeping this here since it's service-level)
 class RouteInfo {
   final double originLat;
   final double originLng;
@@ -30,63 +23,30 @@ class RouteInfo {
   });
 }
 
-// Navigation methods we'll implement via platform channels
+// Navigation service - simplified wrapper around NavigationController
 class NavigationService {
-  static const MethodChannel _channel = MethodChannel(
-    'routewhisper.com/navigation',
-  );
+  static final NavigationController _controller = NavigationController();
 
-  // Current state
-  static NavigationState _currentState = NavigationState.idle;
+  // Current route info
   static RouteInfo? _currentRoute;
 
-  // State change callback
-  static Function(NavigationState)? onStateChanged;
-  static Function(String)? onError;
-
-  // Simulation mode for testing
-  static bool _simulationMode = true; // Enable for emulator testing
-
-  static void initialize() {
-    _channel.setMethodCallHandler(_handleMethodCall);
-  }
-
-  static Future<void> _handleMethodCall(MethodCall call) async {
-    print('📱 Flutter received method call: ${call.method}'); // DEBUG
-    switch (call.method) {
-      case 'navigationStateChanged':
-        final stateString = call.arguments['state'] as String;
-        final newState = NavigationState.values.firstWhere(
-          (state) => state.name.toLowerCase() == stateString.toLowerCase(),
-          orElse: () => NavigationState.idle,
-        );
-
-        _currentState = newState;
-        onStateChanged?.call(newState);
-        break;
-
-      case 'navigationError':
-        final error = call.arguments['error'] as String;
-        onError?.call(error);
-        break;
-    }
-  }
-
-  static NavigationState get currentState => _currentState;
+  // Delegate to controller
+  static NavigationState get currentState => _controller.currentState;
+  static bool get isNavigating => _controller.isNavigating;
   static RouteInfo? get currentRoute => _currentRoute;
 
-  static bool get isNavigating => _currentState == NavigationState.navigating;
-  static bool get canStart => _currentState == NavigationState.ready;
-  static bool get canCancel => [
-    NavigationState.calculating,
-    NavigationState.ready,
-    NavigationState.navigating,
-  ].contains(_currentState);
+  static void initialize() {
+    _controller.initialize();
+  }
 
-  // Enable/disable simulation mode
-  static void setSimulationMode(bool enabled) {
-    _simulationMode = enabled;
-    print('📱 Simulation mode: ${enabled ? "ENABLED" : "DISABLED"}');
+  static void setCallbacks({
+    Function(NavigationState)? onStateChanged,
+    Function(String)? onError,
+    Function(RoutePoint)? onLocationUpdate,
+  }) {
+    _controller.onStateChanged = onStateChanged;
+    _controller.onError = onError;
+    _controller.onLocationUpdate = onLocationUpdate;
   }
 
   static Future<String?> startNavigation({
@@ -95,8 +55,6 @@ class NavigationService {
     required double destLat,
     required double destLng,
   }) async {
-    print('📱 Flutter calling startNavigation...'); // DEBUG
-
     // Store route info
     _currentRoute = RouteInfo(
       originLat: originLat,
@@ -107,130 +65,40 @@ class NavigationService {
       destName: "Los Angeles, CA",
     );
 
-    if (_simulationMode) {
-      return _simulateNavigation(originLat, originLng, destLat, destLng);
+    // First calculate route
+    final result = await _controller.calculateRoute(
+      originLat: originLat,
+      originLng: originLng,
+      destLat: destLat,
+      destLng: destLng,
+    );
+
+    if (result != null && _controller.currentState == NavigationState.ready) {
+      // Then start navigation
+      await _controller.startNavigation();
     }
 
-    try {
-      final result = await _channel.invokeMethod('startNavigation', {
-        'originLat': originLat,
-        'originLng': originLng,
-        'destLat': destLat,
-        'destLng': destLng,
-      });
-      print('📱 Flutter startNavigation result: $result'); // DEBUG
-      return result?.toString();
-    } catch (e) {
-      print('📱 Flutter startNavigation error: $e'); // DEBUG
-      return 'Error: $e';
-    }
+    return result;
   }
 
-  // Simulate navigation flow for testing
-  static Future<String?> _simulateNavigation(
-    double originLat,
-    double originLng,
-    double destLat,
-    double destLng,
-  ) async {
-    print('🎭 SIMULATION: Starting navigation simulation');
-
-    // Simulate state progression
-    _updateState(NavigationState.calculating);
-
-    // Simulate route calculation delay
-    await Future.delayed(const Duration(seconds: 2));
-    _updateState(NavigationState.ready);
-
-    await Future.delayed(const Duration(seconds: 1));
-    _updateState(NavigationState.navigating);
-
-    // Simulate navigation progress
-    _simulateNavigationProgress();
-
-    return 'Simulation started';
+  static Future<void> cancelNavigation() async {
+    await _controller.cancelNavigation();
+    _currentRoute = null; // Clear route info
   }
 
-  static void _simulateNavigationProgress() {
-    // Simulate a 30-second navigation
-    Future.delayed(const Duration(seconds: 30), () {
-      _updateState(NavigationState.completed);
+  static Future<String?> openMapView() => _controller.openMapView();
 
-      // Reset to idle after 3 seconds
-      Future.delayed(const Duration(seconds: 3), () {
-        _updateState(NavigationState.idle);
-        _currentRoute = null; // Clear route
-      });
-    });
-  }
+  // Legacy compatibility methods (can be removed later)
+  static bool get canStart => _controller.currentState == NavigationState.ready;
+  static bool get canCancel => [
+    NavigationState.calculating,
+    NavigationState.ready,
+    NavigationState.navigating,
+  ].contains(_controller.currentState);
 
-  static void _updateState(NavigationState newState) {
-    _currentState = newState;
-    onStateChanged?.call(newState);
-    print('🎭 SIMULATION: State changed to ${newState.name}');
-  }
-
-  static Future<String?> cancelNavigation() async {
-    print('📱 Flutter calling cancelNavigation...'); // DEBUG
-
-    if (_simulationMode) {
-      _updateState(NavigationState.cancelled);
-      Future.delayed(const Duration(milliseconds: 500), () {
-        _updateState(NavigationState.idle);
-        _currentRoute = null; // Clear route
-      });
-      return 'Navigation cancelled (simulated)';
-    }
-
-    try {
-      final result = await _channel.invokeMethod('cancelNavigation');
-      print('📱 Flutter cancelNavigation result: $result'); // DEBUG
-      return result?.toString();
-    } catch (e) {
-      print('📱 Flutter cancelNavigation error: $e'); // DEBUG
-      return 'Error: $e';
-    }
-  }
-
-  static Future<String?> openMapView() async {
-    print('📱 Flutter calling openMapView...'); // DEBUG
-
-    if (_simulationMode && _currentRoute != null) {
-      print('🎭 SIMULATION: Opening map with simulated navigation');
-      // Pass route info and simulation mode to MapActivity
-      try {
-        final result = await _channel.invokeMethod('openMapView', {
-          'simulationMode': true,
-          'navigationState': _currentState.name,
-          'originLat': _currentRoute!.originLat,
-          'originLng': _currentRoute!.originLng,
-          'destLat': _currentRoute!.destLat,
-          'destLng': _currentRoute!.destLng,
-        });
-        return result?.toString();
-      } catch (e) {
-        print('📱 Flutter openMapView error: $e');
-        return 'Error: $e';
-      }
-    }
-
-    try {
-      final result = await _channel.invokeMethod('openMapView');
-      print('📱 Flutter openMapView result: $result'); // DEBUG
-      return result?.toString();
-    } catch (e) {
-      print('📱 Flutter openMapView error: $e'); // DEBUG
-      return 'Error: $e';
-    }
-  }
-
-  static void setNavigationCallbacks({
-    Function()? onMapReady,
-    Function(Map<String, dynamic>)? onRouteReady,
-    Function(String)? onError,
-    Function()? onNavigationStopped,
-  }) {
-    // Note: Since we're using a separate activity, callbacks won't work the same way
-    // We'll handle status through the activities directly
+  // Enable/disable simulation mode (if needed)
+  static void setSimulationMode(bool enabled) {
+    print('📱 Simulation mode: ${enabled ? "ENABLED" : "DISABLED"}');
+    // This could be passed to the controller if needed
   }
 }

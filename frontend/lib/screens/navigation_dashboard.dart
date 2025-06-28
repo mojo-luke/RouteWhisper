@@ -19,22 +19,26 @@ class _NavigationDashboardState extends State<NavigationDashboard> {
     super.initState();
     NavigationService.initialize();
 
-    // Listen for state changes
-    NavigationService.onStateChanged = (state) {
-      setState(() {
-        _currentState = state;
-        _statusMessage = _getStatusMessage(state);
-        _errorMessage = null; // Clear error when state changes
-      });
-    };
-
-    // Listen for errors
-    NavigationService.onError = (error) {
-      setState(() {
-        _errorMessage = error;
-      });
-      _showErrorSnackBar(error);
-    };
+    // Set up callbacks using the new method
+    NavigationService.setCallbacks(
+      onStateChanged: (state) {
+        setState(() {
+          _currentState = state;
+          _statusMessage = _getStatusMessage(state);
+          _errorMessage = null; // Clear error when state changes
+        });
+      },
+      onError: (error) {
+        setState(() {
+          _errorMessage = error;
+        });
+        _showErrorSnackBar(error);
+      },
+      onLocationUpdate: (location) {
+        // Handle location updates if needed
+        print('🎯 Location update: ${location.lat}, ${location.lng}');
+      },
+    );
   }
 
   String _getStatusMessage(NavigationState state) {
