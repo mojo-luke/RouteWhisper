@@ -1,6 +1,5 @@
 package com.routewhisper.route_whisper_app
 
-import android.content.Intent
 import android.util.Log
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -83,15 +82,8 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun handleOpenMapView(call: MethodCall, result: MethodChannel.Result) {
-        Log.d("MainActivity", "Opening map view")
-        
-        val intent = Intent(this, MapActivity::class.java).apply {
-            putExtra("ACTION", call.argument<String>("action") ?: "OPEN_MAP")
-            putExtra("NAVIGATION_STATE", call.argument<String>("navigationState") ?: "idle")
-            putExtra("SIMULATION_MODE", call.argument<Boolean>("simulationMode") ?: true)
-        }
-        startActivity(intent)
-        
+        Log.d("MainActivity", "Opening map view (Flutter-handled)")
+        // Flutter handles map view - no native activity needed
         result.success("Map view opened")
     }
 
@@ -99,26 +91,16 @@ class MainActivity : FlutterActivity() {
     private fun handleStartNavigation(call: MethodCall, result: MethodChannel.Result) {
         val originLat = call.argument<Double>("originLat")
         val originLng = call.argument<Double>("originLng")
-        val destLat = call.argument<Double>("destLat") 
+        val destLat = call.argument<Double>("destLat")
         val destLng = call.argument<Double>("destLng")
-        
+
         if (originLat == null || originLng == null || destLat == null || destLng == null) {
             result.error("INVALID_ARGS", "Missing coordinates", null)
             return
         }
 
-        Log.d("MainActivity", "Starting navigation (legacy): ($originLat, $originLng) -> ($destLat, $destLng)")
-        
-        val intent = Intent(this, MapActivity::class.java).apply {
-            putExtra("NAVIGATION_STATE", "navigating")
-            putExtra("ORIGIN_LAT", originLat)
-            putExtra("ORIGIN_LNG", originLng)
-            putExtra("SIMULATION_MODE", true)
-            putExtra("DEST_LAT", destLat)
-            putExtra("DEST_LNG", destLng)
-        }
-        startActivity(intent)
-        
+        Log.d("MainActivity", "Starting navigation (Flutter-handled): ($originLat, $originLng) -> ($destLat, $destLng)")
+        // Flutter handles navigation - no native activity needed
         result.success("Navigation started")
     }
 

@@ -1,10 +1,9 @@
 package com.routewhisper.route_whisper_app.utils
 
-import com.mapbox.geojson.Point
-
 object Constants {
     // Default map location (San Francisco)
-    val DEFAULT_MAP_CENTER = Point.fromLngLat(-122.43539772352648, 37.77440680146262)
+    const val DEFAULT_MAP_CENTER_LNG = -122.43539772352648
+    const val DEFAULT_MAP_CENTER_LAT = 37.77440680146262
     const val DEFAULT_ZOOM = 14.0
     
     // Navigation defaults

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/navigation_service.dart';
 import '../widgets/route_input_dialog.dart';
+import 'active_navigation_screen.dart';
 
 class NavigationDashboard extends StatefulWidget {
   const NavigationDashboard({super.key});
@@ -286,7 +287,7 @@ class _NavigationDashboardState extends State<NavigationDashboard> {
       case NavigationState.ready:
         buttonText = 'Start Navigation';
         buttonColor = Colors.green;
-        onPressed = () => NavigationService.openMapView();
+        onPressed = _launchNavigation;
         break;
       case NavigationState.navigating:
         buttonText = 'View Navigation';
@@ -453,6 +454,22 @@ class _NavigationDashboardState extends State<NavigationDashboard> {
       originLng: -122.4194,
       destLat: 34.0522,
       destLng: -118.2437,
+    );
+  }
+
+  void _launchNavigation() {
+    // Launch Flutter navigation screen with sample coordinates
+    // TODO: Pass actual route coordinates when available
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => const ActiveNavigationScreen(
+          originLat: 37.7749,  // San Francisco
+          originLng: -122.4194,
+          destLat: 34.0522,     // Los Angeles
+          destLng: -118.2437,
+        ),
+      ),
     );
   }
 

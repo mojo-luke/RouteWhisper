@@ -30,7 +30,7 @@ if (flutterVersionName == null) {
 android {
     namespace "com.routewhisper.route_whisper_app"
     compileSdk flutter.compileSdkVersion
-    ndkVersion flutter.ndkVersion
+    ndkVersion "27.0.12077973"  // Required by mapbox_maps_flutter
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8
@@ -66,7 +66,8 @@ android {
 }
 
 dependencies {
-  implementation "com.mapbox.navigationcore:android:3.10.0"  // Adds core Navigation SDK functionality
+  // Mapbox dependencies managed by mapbox_maps_flutter plugin
+  // No manual dependencies needed - Flutter plugin handles everything
 }
 
 flutter {
