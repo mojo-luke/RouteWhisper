@@ -30,15 +30,15 @@ if (flutterVersionName == null) {
 android {
     namespace "com.routewhisper.route_whisper_app"
     compileSdk flutter.compileSdkVersion
-    ndkVersion "27.0.12077973"  // Required by mapbox_maps_flutter
+    ndkVersion "27.0.12077973"
 
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_1_8
-        targetCompatibility JavaVersion.VERSION_1_8
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
     }
 
     kotlinOptions {
-        jvmTarget = '1.8'
+        jvmTarget = '11'
     }
 
     sourceSets {
@@ -66,8 +66,20 @@ android {
 }
 
 dependencies {
-  // Mapbox dependencies managed by mapbox_maps_flutter plugin
-  // No manual dependencies needed - Flutter plugin handles everything
+  // Mapbox Navigation SDK for NDK 27
+  implementation "com.mapbox.navigationcore:android:3.10.0"  // Core Navigation SDK functionality
+  implementation "com.mapbox.navigationcore:ui-components:3.10.0"  // UI components (route line, camera, etc.)
+
+  // AndroidX dependencies
+  implementation "androidx.appcompat:appcompat:1.6.1"  // For AppCompatActivity
+
+  // Testing dependencies
+  testImplementation "junit:junit:4.13.2"
+  testImplementation "io.mockk:mockk:1.13.8"  // Kotlin mocking library
+  testImplementation "org.robolectric:robolectric:4.11.1"  // Android framework for unit tests
+  testImplementation "androidx.test:core:1.5.0"  // AndroidX test core
+  testImplementation "org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3"  // Coroutines testing
+  testImplementation "org.jetbrains.kotlin:kotlin-test:1.9.10"  // Kotlin test assertions
 }
 
 flutter {

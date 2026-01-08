@@ -12,7 +12,7 @@
 
     <application
         android:label="frontend"
-        android:name="${applicationName}"
+        android:name=".RouteWhisperApplication"
         android:icon="@mipmap/ic_launcher">
         <activity
             android:name=".MainActivity"
@@ -40,7 +40,7 @@
         <activity
             android:name=".MapActivity"
             android:exported="false"
-            android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
+            android:theme="@style/MapActivityTheme"
             android:launchMode="singleTop" />
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
