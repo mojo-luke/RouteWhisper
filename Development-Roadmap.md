@@ -20,10 +20,10 @@ This document outlines the complete development plan for RouteWhisper, broken do
 - [x] Implement basic route calculation
 - [x] Set up location tracking
 - [x] Create basic map interface
-- [ ] Implement turn-by-turn UI (maneuver instructions)
+- [x] Implement turn-by-turn UI (maneuver instructions)
 - [ ] Add navigation camera controls (auto-follow)
-- [ ] Integrate voice guidance
-- [ ] Add trip progress display
+- [x] Integrate voice guidance
+- [x] Add trip progress display
 - [ ] Test full navigation functionality
 
 ### **Step 3: POI Data Pipeline**

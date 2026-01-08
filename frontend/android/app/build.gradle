@@ -67,19 +67,23 @@ android {
 
 dependencies {
   // Mapbox Navigation SDK for NDK 27
-  implementation "com.mapbox.navigationcore:android:3.10.0"  // Core Navigation SDK functionality
-  implementation "com.mapbox.navigationcore:ui-components:3.10.0"  // UI components (route line, camera, etc.)
+  implementation "com.mapbox.navigationcore:android-ndk27:3.18.0-beta.1"
+  implementation "com.mapbox.navigationcore:ui-components-ndk27:3.18.0-beta.1"
+  implementation "com.mapbox.navigationcore:ui-maps-ndk27:3.18.0-beta.1"
+  implementation "com.mapbox.navigationcore:tripdata-ndk27:3.18.0-beta.1"
+  implementation "com.mapbox.navigationcore:voice-ndk27:3.18.0-beta.1"
 
   // AndroidX dependencies
-  implementation "androidx.appcompat:appcompat:1.6.1"  // For AppCompatActivity
+  implementation "androidx.appcompat:appcompat:1.6.1"
+  implementation "androidx.constraintlayout:constraintlayout:2.1.4"
 
   // Testing dependencies
   testImplementation "junit:junit:4.13.2"
-  testImplementation "io.mockk:mockk:1.13.8"  // Kotlin mocking library
-  testImplementation "org.robolectric:robolectric:4.11.1"  // Android framework for unit tests
-  testImplementation "androidx.test:core:1.5.0"  // AndroidX test core
-  testImplementation "org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3"  // Coroutines testing
-  testImplementation "org.jetbrains.kotlin:kotlin-test:1.9.10"  // Kotlin test assertions
+  testImplementation "io.mockk:mockk:1.13.8"
+  testImplementation "org.robolectric:robolectric:4.11.1"
+  testImplementation "androidx.test:core:1.5.0"
+  testImplementation "org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3"
+  testImplementation "org.jetbrains.kotlin:kotlin-test:1.9.10"
 }
 
 flutter {

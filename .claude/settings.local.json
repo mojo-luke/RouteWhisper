@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__mapbox-devkit__get_latest_mapbox_docs_tool",
+      "Bash(unset:*)",
+      "Bash(flutter build:*)",
+      "Bash(./gradlew test:*)",
+      "Bash(./gradlew :app:testDebugUnitTest:*)",
+      "Bash(adb install:*)",
+      "Bash(flutter clean:*)",
+      "Bash(flutter pub get:*)"
+    ]
+  }
+}
