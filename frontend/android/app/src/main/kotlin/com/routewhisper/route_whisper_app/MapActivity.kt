@@ -13,12 +13,16 @@ import com.mapbox.navigation.base.extensions.applyLanguageAndVoiceUnitOptions
 import com.mapbox.navigation.base.route.NavigationRoute
 import com.mapbox.navigation.base.route.NavigationRouterCallback
 import com.mapbox.navigation.base.route.RouterFailure
+import com.mapbox.navigation.base.ExperimentalPreviewMapboxNavigationAPI
 import com.mapbox.navigation.core.MapboxNavigation
 import com.mapbox.navigation.core.lifecycle.MapboxNavigationApp
 import com.mapbox.navigation.core.trip.session.LocationMatcherResult
 import com.mapbox.navigation.core.trip.session.LocationObserver
 import com.mapbox.navigation.core.trip.session.RouteProgressObserver
 import com.mapbox.navigation.core.trip.session.VoiceInstructionsObserver
+import android.os.Handler
+import android.os.Looper
+import com.mapbox.navigation.core.replay.route.ReplayRouteMapper
 import com.mapbox.navigation.base.formatter.DistanceFormatterOptions
 import com.mapbox.navigation.core.formatter.MapboxDistanceFormatter
 import com.mapbox.navigation.tripdata.maneuver.api.MapboxManeuverApi
@@ -36,6 +40,8 @@ import com.mapbox.navigation.ui.maps.route.line.model.MapboxRouteLineApiOptions
 import com.mapbox.navigation.ui.maps.route.line.model.MapboxRouteLineViewOptions
 import com.mapbox.navigation.ui.maps.camera.NavigationCamera
 import com.mapbox.navigation.ui.maps.camera.data.MapboxNavigationViewportDataSource
+import com.mapbox.navigation.ui.maps.location.NavigationLocationProvider
+import com.mapbox.common.location.Location
 import com.mapbox.maps.CameraOptions
 import com.mapbox.maps.EdgeInsets
 import com.mapbox.maps.extension.style.layers.properties.generated.Visibility
@@ -43,6 +49,7 @@ import com.mapbox.maps.plugin.animation.camera
 import com.mapbox.maps.plugin.locationcomponent.location
 import java.util.Locale
 
+@OptIn(ExperimentalPreviewMapboxNavigationAPI::class)
 class MapActivity : AppCompatActivity() {
 
     private companion object {
@@ -51,6 +58,11 @@ class MapActivity : AppCompatActivity() {
 
     private var mapboxNavigation: MapboxNavigation? = null
     private lateinit var mapView: MapView
+
+    // Location simulation components
+    private val simulationHandler = Handler(Looper.getMainLooper())
+    private var isSimulating = false
+    private val navigationLocationProvider = NavigationLocationProvider()
 
     // Route line components
     private lateinit var routeLineApi: MapboxRouteLineApi
@@ -106,6 +118,15 @@ class MapActivity : AppCompatActivity() {
         mapView.mapboxMap.loadStyle(Style.MAPBOX_STREETS) { style ->
             Log.d(TAG, "Map style loaded successfully")
 
+            // Set up location component with NavigationLocationProvider
+            mapView.location.apply {
+                setLocationProvider(navigationLocationProvider)
+                enabled = true
+                pulsingEnabled = true
+                // Create navigation puck with bearing (directional arrow)
+                locationPuck = com.mapbox.maps.plugin.locationcomponent.createDefault2DPuck(withBearing = true)
+            }
+
             // Initialize route line rendering
             initializeRouteLine()
 
@@ -126,8 +147,9 @@ class MapActivity : AppCompatActivity() {
             // Register observers for route and location updates
             registerObservers()
 
-            // Start trip session
-            mapboxNavigation?.startTripSession()
+            // Start REPLAY trip session (for simulation) - this tells SDK to use internal replayer
+            mapboxNavigation?.startReplayTripSession()
+            Log.d(TAG, "Started replay trip session for simulation")
 
             // Request route only if not in view-only mode and coordinates are provided
             if (!viewOnly && originLat != 0.0 && originLng != 0.0 && destLat != 0.0 && destLng != 0.0) {
@@ -147,8 +169,10 @@ class MapActivity : AppCompatActivity() {
         val routeLineOptions = MapboxRouteLineApiOptions.Builder().build()
         routeLineApi = MapboxRouteLineApi(routeLineOptions)
 
-        // Initialize route line view options
-        val routeLineViewOptions = MapboxRouteLineViewOptions.Builder(this).build()
+        // Initialize route line view options - render below location puck
+        val routeLineViewOptions = MapboxRouteLineViewOptions.Builder(this)
+            .routeLineBelowLayerId("mapbox-location-indicator-layer") // Render route below location puck
+            .build()
         routeLineView = MapboxRouteLineView(routeLineViewOptions)
 
         Log.d(TAG, "Route line components initialized")
@@ -237,6 +261,8 @@ class MapActivity : AppCompatActivity() {
 
         // Route progress observer - updates maneuvers and trip progress
         mapboxNavigation?.registerRouteProgressObserver(RouteProgressObserver { routeProgress ->
+            Log.d(TAG, "🎯 Route progress update: distance remaining=${routeProgress.distanceRemaining}")
+
             // Update maneuver view (v3: renderManeuvers takes Expected directly)
             val maneuvers = maneuverApi.getManeuvers(routeProgress)
             maneuverView.renderManeuvers(maneuvers)
@@ -259,6 +285,25 @@ class MapActivity : AppCompatActivity() {
                         voiceInstructionsPlayer.play(value.announcement, voiceInstructionsPlayerCallback)
                     }
                 )
+            }
+        })
+
+        // Location observer - updates location puck and viewport for camera following
+        mapboxNavigation?.registerLocationObserver(object : LocationObserver {
+            override fun onNewRawLocation(rawLocation: Location) {
+                // Not used
+            }
+
+            override fun onNewLocationMatcherResult(locationMatcherResult: LocationMatcherResult) {
+                val location = locationMatcherResult.enhancedLocation
+                Log.d(TAG, "📍 Location update: lat=${location.latitude}, lng=${location.longitude}, bearing=${location.bearing}")
+
+                // Update location puck via NavigationLocationProvider
+                navigationLocationProvider.changePosition(location)
+
+                // Update viewport data source for camera following
+                viewportDataSource.onLocationChanged(location)
+                viewportDataSource.evaluate()
             }
         })
 
@@ -290,6 +335,9 @@ class MapActivity : AppCompatActivity() {
                     val duration = primaryRoute.directionsRoute.duration() ?: 0.0
 
                     Log.d(TAG, "Primary route: distance=${distance}m, duration=${duration}s")
+
+                    // Start location simulation along the route
+                    startSimulation(primaryRoute)
                 } else {
                     Log.e(TAG, "No routes received")
                 }
@@ -314,8 +362,69 @@ class MapActivity : AppCompatActivity() {
         mapboxNavigation?.requestRoutes(routeOptions, routesRequestCallback)
     }
 
+    private fun startSimulation(route: NavigationRoute) {
+        Log.d(TAG, "Starting replay simulation for route")
+
+        try {
+            // Access the internal MapboxReplayer from navigation
+            val mapboxReplayer = mapboxNavigation?.mapboxReplayer
+            if (mapboxReplayer == null) {
+                Log.e(TAG, "MapboxReplayer is null, cannot start simulation")
+                return
+            }
+
+            // Clear any existing events
+            mapboxReplayer.clearEvents()
+
+            // Convert route geometry to replay events using ReplayRouteMapper
+            val replayRouteMapper = ReplayRouteMapper()
+            val replayEvents = replayRouteMapper.mapDirectionsRouteGeometry(route.directionsRoute)
+
+            Log.d(TAG, "Generated ${replayEvents.size} replay events from route")
+
+            if (replayEvents.isNotEmpty()) {
+                // Push all events to the internal replayer
+                mapboxReplayer.pushEvents(replayEvents)
+
+                // Set playback speed (1.5x for faster testing)
+                mapboxReplayer.playbackSpeed(1.5)
+
+                // Seek to first location
+                mapboxReplayer.seekTo(replayEvents.first())
+
+                // Start playback - this will feed locations into MapboxNavigation automatically
+                mapboxReplayer.play()
+
+                Log.d(TAG, "Started replay playback at 1.5x speed")
+
+                // Switch to following mode after 3 seconds
+                simulationHandler.postDelayed({
+                    navigationCamera.requestNavigationCameraToFollowing()
+                    Log.d(TAG, "Switched camera to following mode")
+                }, 3000)
+            } else {
+                Log.e(TAG, "No replay events generated")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start replay simulation", e)
+        }
+    }
+
+    private fun stopSimulation() {
+        Log.d(TAG, "Stopping replay simulation")
+        try {
+            mapboxNavigation?.mapboxReplayer?.stop()
+            mapboxNavigation?.mapboxReplayer?.finish()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error stopping simulation", e)
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
+
+        // Stop location simulation
+        stopSimulation()
 
         // Clean up voice components
         speechApi.cancel()
