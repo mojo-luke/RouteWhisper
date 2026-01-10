@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">RouteWhisper</string>
+    <string name="recenter_camera">Recenter camera on route</string>
+</resources>

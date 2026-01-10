@@ -42,6 +42,7 @@ class NavigationController {
   Function(NavigationState)? onStateChanged;
   Function(String)? onError;
   Function(RoutePoint)? onLocationUpdate;
+  Function(String)? onRoutePolyline;
 
   NavigationState get currentState => _currentState;
   bool get isNavigating => _currentState == NavigationState.navigating;
@@ -76,6 +77,12 @@ class NavigationController {
         final data = Map<String, dynamic>.from(call.arguments as Map);
         final error = data['error'] as String;
         onError?.call(error);
+        break;
+      case 'setRoutePolyline':
+        final data = Map<String, dynamic>.from(call.arguments as Map);
+        final polyline = data['polyline'] as String;
+        print('📍 Received route polyline from Android: ${polyline.substring(0, polyline.length > 50 ? 50 : polyline.length)}...');
+        onRoutePolyline?.call(polyline);
         break;
     }
   }

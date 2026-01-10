@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: routewhisper-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: routewhisper-postgres
+    environment:
+      POSTGRES_USER: routewhisper
+      POSTGRES_PASSWORD: routewhisper_dev
+      POSTGRES_DB: routewhisper
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  mongodb:
+    image: mongo:7
+    container_name: routewhisper-mongodb
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: routewhisper
+      MONGO_INITDB_ROOT_PASSWORD: routewhisper_dev
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+  postgres_data:
+  mongodb_data:

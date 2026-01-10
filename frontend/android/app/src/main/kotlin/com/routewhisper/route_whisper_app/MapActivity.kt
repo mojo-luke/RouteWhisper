@@ -47,6 +47,10 @@ import com.mapbox.maps.EdgeInsets
 import com.mapbox.maps.extension.style.layers.properties.generated.Visibility
 import com.mapbox.maps.plugin.animation.camera
 import com.mapbox.maps.plugin.locationcomponent.location
+import com.mapbox.maps.plugin.gestures.OnMoveListener
+import com.mapbox.maps.plugin.gestures.gestures
+import com.google.android.material.floatingactionbutton.FloatingActionButton
+import android.view.View
 import java.util.Locale
 
 @OptIn(ExperimentalPreviewMapboxNavigationAPI::class)
@@ -89,6 +93,10 @@ class MapActivity : AppCompatActivity() {
         speechApi.clean(value)
     }
 
+    // Recenter button for manual camera control
+    private lateinit var recenterButton: FloatingActionButton
+    private var isUserControllingCamera = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_map)
@@ -99,6 +107,12 @@ class MapActivity : AppCompatActivity() {
         // Initialize UI views
         maneuverView = findViewById(R.id.maneuverView)
         tripProgressView = findViewById(R.id.tripProgressView)
+        recenterButton = findViewById<FloatingActionButton>(R.id.recenterButton)
+
+        // Set up recenter button click listener
+        recenterButton.setOnClickListener {
+            onRecenterButtonClick()
+        }
 
         // Check if this is view-only mode (just show map without calculating new route)
         val viewOnly = intent.getBooleanExtra("viewOnly", false)
@@ -132,6 +146,9 @@ class MapActivity : AppCompatActivity() {
 
             // Initialize navigation camera
             initializeNavigationCamera()
+
+            // Set up gesture listener to detect manual camera control
+            setupGestureListener()
 
             // Initialize all navigation UI components
             initializeManeuverComponents()
@@ -336,6 +353,19 @@ class MapActivity : AppCompatActivity() {
 
                     Log.d(TAG, "Primary route: distance=${distance}m, duration=${duration}s")
 
+                    // Extract route geometry (encoded polyline) for POI discovery
+                    val geometry = primaryRoute.directionsRoute.geometry()
+                    if (geometry != null) {
+                        Log.d(TAG, "Route geometry: ${geometry.substring(0, minOf(50, geometry.length))}... (${geometry.length} chars)")
+
+                        // Send polyline to Flutter via MainActivity's method channel
+                        runOnUiThread {
+                            MainActivity.sendRoutePolyline(geometry)
+                        }
+                    } else {
+                        Log.w(TAG, "Route geometry is null - cannot extract polyline for POI discovery")
+                    }
+
                     // Start location simulation along the route
                     startSimulation(primaryRoute)
                 } else {
@@ -418,6 +448,50 @@ class MapActivity : AppCompatActivity() {
         } catch (e: Exception) {
             Log.e(TAG, "Error stopping simulation", e)
         }
+    }
+
+    private fun setupGestureListener() {
+        // Listen for when user starts manually moving the camera
+        mapView.gestures.addOnMoveListener(object : OnMoveListener {
+            override fun onMoveBegin(detector: com.mapbox.android.gestures.MoveGestureDetector) {
+                // User started panning the map
+                onUserStartedManualCameraControl()
+            }
+
+            override fun onMove(detector: com.mapbox.android.gestures.MoveGestureDetector): Boolean {
+                return false // Don't consume the gesture
+            }
+
+            override fun onMoveEnd(detector: com.mapbox.android.gestures.MoveGestureDetector) {
+                // Move gesture ended
+            }
+        })
+
+        Log.d(TAG, "Gesture listener set up for manual camera control")
+    }
+
+    private fun onUserStartedManualCameraControl() {
+        if (!isUserControllingCamera) {
+            Log.d(TAG, "User started manual camera control - switching to IDLE mode")
+            isUserControllingCamera = true
+
+            // Switch navigation camera to idle mode (allows free camera movement)
+            navigationCamera.requestNavigationCameraToIdle()
+
+            // Show recenter button
+            recenterButton.visibility = View.VISIBLE
+        }
+    }
+
+    private fun onRecenterButtonClick() {
+        Log.d(TAG, "Recenter button clicked - returning to following mode")
+        isUserControllingCamera = false
+
+        // Switch back to following mode
+        navigationCamera.requestNavigationCameraToFollowing()
+
+        // Hide recenter button
+        recenterButton.visibility = View.GONE
     }
 
     override fun onDestroy() {

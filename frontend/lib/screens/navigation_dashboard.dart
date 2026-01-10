@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/navigation_service.dart';
 import '../widgets/route_input_dialog.dart';
+import '../widgets/poi_dashboard.dart';
 import 'active_navigation_screen.dart';
 
 class NavigationDashboard extends StatefulWidget {
@@ -38,6 +39,13 @@ class _NavigationDashboardState extends State<NavigationDashboard> {
       onLocationUpdate: (location) {
         // Handle location updates if needed
         print('🎯 Location update: ${location.lat}, ${location.lng}');
+      },
+      onRoutePolylineReceived: () {
+        // Refresh UI when route polyline is received
+        print('🎯 Route polyline received! Refreshing UI...');
+        setState(() {
+          // Just trigger a rebuild to show the POI button
+        });
       },
     );
   }
@@ -260,7 +268,24 @@ class _NavigationDashboardState extends State<NavigationDashboard> {
           ],
         ),
 
-        const SizedBox(height: 24),
+        const SizedBox(height: 16),
+
+        // POI Discovery Button (Debug: showing unconditionally for now)
+        _buildDiscoverPOIsButton(),
+        const SizedBox(height: 8),
+        // Debug info
+        if (NavigationService.routePolyline != null)
+          Text(
+            'Route polyline available (${NavigationService.routePolyline!.length} chars)',
+            style: TextStyle(color: Colors.green, fontSize: 10),
+          )
+        else
+          const Text(
+            'Waiting for route polyline...',
+            style: TextStyle(color: Colors.orange, fontSize: 10),
+          ),
+
+        const SizedBox(height: 16),
 
         // Cancel Button (when applicable)
         if (NavigationService.canCancel) ...[_buildCancelButton()],
@@ -361,6 +386,45 @@ class _NavigationDashboardState extends State<NavigationDashboard> {
         style: ElevatedButton.styleFrom(
           backgroundColor: const Color(0xFF3D3D3D),
           foregroundColor: Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDiscoverPOIsButton() {
+    final hasPOIs = NavigationService.hasPOIs;
+    final hasPolyline = NavigationService.routePolyline != null;
+
+    return SizedBox(
+      width: double.infinity,
+      height: 56,
+      child: ElevatedButton.icon(
+        onPressed: hasPolyline ? () {
+          print('🔍 Discover POIs button pressed!');
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => const POIDashboard(),
+            ),
+          );
+        } : null,
+        icon: Icon(
+          hasPOIs ? Icons.explore : Icons.search,
+          size: 20,
+        ),
+        label: Text(
+          hasPolyline
+            ? (hasPOIs ? 'View POIs (${NavigationService.lastPOIResponse?.totalFound})' : 'Discover POIs')
+            : 'Waiting for route...'
+        ),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: hasPOIs ? Colors.green.shade700 : Colors.blue.shade700,
+          foregroundColor: Colors.white,
+          disabledBackgroundColor: Colors.grey.shade700,
+          disabledForegroundColor: Colors.grey.shade400,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
           ),

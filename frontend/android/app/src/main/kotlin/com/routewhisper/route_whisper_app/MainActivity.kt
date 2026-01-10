@@ -9,12 +9,25 @@ import io.flutter.plugin.common.MethodChannel
 import com.mapbox.navigation.core.lifecycle.MapboxNavigationApp
 
 class MainActivity : FlutterActivity() {
-    private val methodChannel = "routewhisper.com/navigation"
+    private val methodChannelName = "routewhisper.com/navigation"
+
+    companion object {
+        // Static reference to method channel for use by other activities
+        private var methodChannelInstance: MethodChannel? = null
+
+        fun sendRoutePolyline(polyline: String) {
+            methodChannelInstance?.invokeMethod("setRoutePolyline", mapOf("polyline" to polyline))
+            Log.d("MainActivity", "Sent route polyline to Flutter (${polyline.length} chars)")
+        }
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, methodChannel).setMethodCallHandler { call, result ->
+        val channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, methodChannelName)
+        methodChannelInstance = channel  // Store reference for MapActivity
+
+        channel.setMethodCallHandler { call, result ->
             Log.d("MainActivity", "Received method call: ${call.method}")
 
             when (call.method) {
