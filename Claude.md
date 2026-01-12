@@ -30,7 +30,75 @@ RouteWhisper is a Flutter navigation app with native Android integration using M
 - Add features one at a time AFTER navigation works
 - Don't mix unrelated features in same commit
 
-### 5. Check Mapbox Documentation FIRST (MANDATORY)
+### 5. Clean Architecture: Separation of Concerns
+- **All business logic lives in Flutter services** (WaypointManager, NavigationService, etc.)
+- **Native code (Android/iOS) is UI-only** - displays data, handles Mapbox SDK, sends events to Flutter
+- **No calculation logic in native code** - calculations happen in Flutter, native just shows results
+- **Method channels bridge UI and logic** - native sends raw data, Flutter computes, native displays formatted result
+
+#### Why This Matters:
+1. **Simple UI Updates**: Change UI/UX without touching business logic
+2. **iOS Preparation**: When adding iOS, reuse all Flutter business logic - only write iOS UI layer
+3. **Testability**: Test business logic in Dart (60+ unit tests), native code stays simple
+4. **Maintainability**: One source of truth for calculations (not duplicated across platforms)
+
+#### Architecture Pattern:
+```
+┌─────────────────────────────────────────────────────────┐
+│ Native Android (MapActivity.kt)                         │
+│ - Display Mapbox NavigationView                         │
+│ - Show waypoint progress card                           │
+│ - Send route progress to Flutter via method channel     │
+│ - Receive formatted display data from Flutter           │
+└────────────────────┬────────────────────────────────────┘
+                     │ Method Channel
+                     │ (raw data ↑, formatted data ↓)
+                     │
+┌────────────────────▼────────────────────────────────────┐
+│ Flutter Services (WaypointManager, NavigationService)   │
+│ - Calculate waypoint progress                           │
+│ - Manage waypoint state                                 │
+│ - Handle arrival/departure logic                        │
+│ - All business rules and calculations                   │
+└─────────────────────────────────────────────────────────┘
+```
+
+#### Example (Waypoint Progress):
+**❌ Old Way (tightly coupled):**
+```kotlin
+// MapActivity.kt - calculation logic mixed with UI
+val distanceMiles = distanceMeters * 0.000621371
+val durationMinutes = (durationSeconds / 60).toInt()
+waypointDistanceText.text = String.format("%.1f mi", distanceMiles)
+```
+
+**✅ New Way (clean separation):**
+```kotlin
+// MapActivity.kt - UI only, delegates to Flutter
+MainActivity.methodChannelInstance?.invokeMethod(
+    "calculateWaypointProgress",
+    mapOf("legIndex" to legIndex, "distanceMeters" to distanceMeters)
+) { result ->
+    waypointDistanceText.text = result["distanceFormatted"] // Just display
+}
+```
+
+```dart
+// WaypointManager.dart - all calculation logic in Flutter
+Map<String, dynamic>? getWaypointProgressData({
+  required int legIndex,
+  required double distanceMeters,
+  required double durationSeconds,
+}) {
+  // All calculations, business rules, edge cases handled here
+  final distanceMiles = distanceMeters * 0.000621371;
+  return {'distanceFormatted': distanceMiles.toStringAsFixed(1), ...};
+}
+```
+
+**Result**: When adding iOS, reuse `WaypointManager.getWaypointProgressData()` - only write SwiftUI display code.
+
+### 6. Check Mapbox Documentation FIRST (MANDATORY)
 - **ALWAYS check `docs/mapbox/` before implementing ANY Mapbox feature**
 - **During planning phase**: Read QUICK_INDEX.md to find relevant docs
 - **Before coding**: Read the specific doc for that feature
@@ -228,6 +296,7 @@ startActivity(Intent(this, MapActivity::class.java))
 
 ---
 
-**Last Updated:** January 7, 2026
-**Current Commit:** db48d90 (clean slate after architecture reset)
+**Last Updated:** January 12, 2026
+**Current Commit:** 9b4183a (test coverage + clean architecture refactoring)
+**Architecture:** Clean separation - Flutter services (logic), Native UI (display)
 **Documentation Library**: 21 docs ready in `docs/mapbox/`
