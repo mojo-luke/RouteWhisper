@@ -56,7 +56,7 @@ class NavigationController {
     print('🎯 NavigationController initialized');
   }
 
-  Future<void> _handleMethodCall(MethodCall call) async {
+  Future<dynamic> _handleMethodCall(MethodCall call) async {
     print('📱 Flutter NavigationController received: ${call.method}');
 
     switch (call.method) {
@@ -98,7 +98,11 @@ class NavigationController {
       case 'destinationArrived':
         _handleDestinationArrived();
         break;
+      case 'calculateWaypointProgress':
+        final data = Map<String, dynamic>.from(call.arguments as Map);
+        return _handleCalculateWaypointProgress(data);
     }
+    return null;
   }
 
   // Public API
@@ -268,6 +272,31 @@ class NavigationController {
   void _handleDestinationArrived() {
     print('🏁 Destination reached!');
     _setState(NavigationState.completed);
+  }
+
+  /// Handle waypoint progress calculation request from Android
+  /// Returns formatted progress data or null if waypoint card should be hidden
+  Map<String, dynamic>? _handleCalculateWaypointProgress(Map<String, dynamic> data) {
+    final legIndex = data['legIndex'] as int;
+    final distanceMeters = data['distanceMeters'] as double;
+    final durationSeconds = data['durationSeconds'] as double;
+
+    print('📊 Calculating waypoint progress: leg $legIndex, ${distanceMeters.toStringAsFixed(0)}m, ${durationSeconds.toStringAsFixed(0)}s');
+
+    // Use WaypointManager to calculate progress
+    final progressData = NavigationService.waypointManager.getWaypointProgressData(
+      legIndex: legIndex,
+      distanceMeters: distanceMeters,
+      durationSeconds: durationSeconds,
+    );
+
+    if (progressData != null) {
+      print('✅ Waypoint progress: ${progressData['name']}, ${progressData['distanceFormatted']} mi, ${progressData['etaFormatted']}');
+    } else {
+      print('ℹ️ No waypoint progress to show (final destination or no waypoints)');
+    }
+
+    return progressData;
   }
 
   // Simulation logic (moved from Android)

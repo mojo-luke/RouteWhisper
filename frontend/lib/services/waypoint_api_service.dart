@@ -39,7 +39,7 @@ class WaypointApiService {
       'departure_time': waypoint.departureTime!.toIso8601String(),
       'is_automatic_departure': waypoint.isAutomaticDeparture ?? false,
       'waypoint_order': waypoint.order,
-      // TODO: Add total_waypoints from WaypointManager
+      // Note: total_waypoints not included here; can be added when WaypointManager is passed
     };
 
     try {
@@ -70,8 +70,8 @@ class WaypointApiService {
   ///
   /// Returns map of category -> average duration in minutes
   static Future<Map<String, double>?> getCategoryAverages() async {
-    // TODO: Implement in Phase 6 when backend analytics are ready
-    print('⏳ Category averages endpoint not yet implemented');
+    // Phase 6: Implement when backend analytics endpoint is ready
+    print('⏳ Category averages endpoint not yet implemented (Phase 6)');
     return null;
   }
 
@@ -79,8 +79,8 @@ class WaypointApiService {
   ///
   /// Returns analytics about when user typically stops
   static Future<Map<String, dynamic>?> getTimePatterns() async {
-    // TODO: Implement in Phase 6 when backend analytics are ready
-    print('⏳ Time patterns endpoint not yet implemented');
+    // Phase 6: Implement when backend analytics endpoint is ready
+    print('⏳ Time patterns endpoint not yet implemented (Phase 6)');
     return null;
   }
 }

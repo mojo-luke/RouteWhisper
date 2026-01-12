@@ -26,6 +26,7 @@ import com.mapbox.navigation.core.trip.session.VoiceInstructionsObserver
 import com.mapbox.navigation.core.arrival.ArrivalObserver
 import android.os.Handler
 import android.os.Looper
+import io.flutter.plugin.common.MethodChannel
 import com.mapbox.navigation.core.replay.route.ReplayRouteMapper
 import com.mapbox.navigation.base.formatter.DistanceFormatterOptions
 import com.mapbox.navigation.core.formatter.MapboxDistanceFormatter
@@ -362,11 +363,9 @@ class MapActivity : AppCompatActivity() {
                         // Start monitoring for departure
                         startDepartureMonitoring(waypointLocation)
 
-                        // TODO: TECHNICAL DEBT - Replace with full arrival notification UI
-                        // This is a temporary Snackbar notification. The full implementation
-                        // should include:
-                        // - Overlay dialog with waypoint name and estimated stop duration
-                        // - Live timer showing elapsed stop time
+                        // TECHNICAL DEBT: Snackbar instead of rich arrival notification
+                        // See TECHNICAL_DEBT.md #2 for planned rich overlay with timer/buttons
+                        // This temporary Snackbar provides basic arrival notification
                         // - "I'm Here" acknowledgment button
                         // - "Continue" button for manual departure
                         // - "Skip" button to skip this waypoint
@@ -625,48 +624,60 @@ class MapActivity : AppCompatActivity() {
     /**
      * Update waypoint progress card with current leg information (Google Maps style)
      * Shows next waypoint name, distance, ETA, and progress indicator
+     *
+     * Note: Uses Flutter WaypointManager for calculation logic via method channel.
+     * This keeps all waypoint logic centralized in Flutter for easier UI updates.
      */
     private fun updateWaypointProgress(routeProgress: com.mapbox.navigation.base.trip.model.RouteProgress) {
         val currentLegProgress = routeProgress.currentLegProgress ?: return
         val legIndex = currentLegProgress.legIndex
+        val distanceMeters = currentLegProgress.distanceRemaining
+        val durationSeconds = currentLegProgress.durationRemaining
 
-        // Get total number of legs and intermediate waypoints
-        val route = routeProgress.navigationRoute.directionsRoute
-        val totalLegs = route.legs()?.size ?: 0
-        val intermediateWaypointCount = if (totalLegs > 0) totalLegs - 1 else 0
+        // Send to Flutter WaypointManager for calculation
+        MainActivity.methodChannelInstance?.invokeMethod(
+            "calculateWaypointProgress",
+            mapOf(
+                "legIndex" to legIndex,
+                "distanceMeters" to distanceMeters,
+                "durationSeconds" to durationSeconds
+            ),
+            object : MethodChannel.Result {
+                override fun success(result: Any?) {
+                    val progressData = result as? Map<*, *>
 
-        // Only show waypoint card for intermediate waypoints (not final destination)
-        val isIntermediateWaypoint = legIndex < totalLegs - 1
+                    runOnUiThread {
+                        if (progressData != null && progressData["shouldShow"] == true) {
+                            // Show the card with data from WaypointManager
+                            waypointProgressCard.visibility = View.VISIBLE
+                            waypointNameText.text = "Next stop: ${progressData["name"]}"
+                            waypointDistanceText.text = "${progressData["distanceFormatted"]} mi"
+                            waypointEtaText.text = progressData["etaFormatted"] as String
+                            waypointStopIndicator.text = progressData["stopIndicator"] as String
+                        } else {
+                            // Hide the card (final destination or no waypoints)
+                            waypointProgressCard.visibility = View.GONE
+                        }
+                    }
+                }
 
-        if (isIntermediateWaypoint && waypointNames != null && legIndex < waypointNames!!.size) {
-            // Show the card
-            runOnUiThread {
-                waypointProgressCard.visibility = View.VISIBLE
+                override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) {
+                    Log.e(TAG, "Error calculating waypoint progress: $errorMessage")
+                    // Fallback: hide the card on error
+                    runOnUiThread {
+                        waypointProgressCard.visibility = View.GONE
+                    }
+                }
 
-                // Update waypoint name
-                val waypointName = waypointNames!![legIndex]
-                waypointNameText.text = "Next stop: $waypointName"
-
-                // Update distance (convert meters to miles)
-                val distanceMeters = currentLegProgress.distanceRemaining
-                val distanceMiles = distanceMeters * 0.000621371
-                waypointDistanceText.text = String.format("%.1f mi", distanceMiles)
-
-                // Update ETA (convert seconds to minutes)
-                val durationSeconds = currentLegProgress.durationRemaining
-                val durationMinutes = (durationSeconds / 60).toInt()
-                waypointEtaText.text = "$durationMinutes min"
-
-                // Update stop indicator
-                val stopNumber = legIndex + 1
-                waypointStopIndicator.text = "Stop $stopNumber of $intermediateWaypointCount"
+                override fun notImplemented() {
+                    Log.w(TAG, "calculateWaypointProgress not implemented in Flutter")
+                    // Fallback: hide the card
+                    runOnUiThread {
+                        waypointProgressCard.visibility = View.GONE
+                    }
+                }
             }
-        } else {
-            // Hide the card for final destination or when no waypoint names
-            runOnUiThread {
-                waypointProgressCard.visibility = View.GONE
-            }
-        }
+        )
     }
 
     private fun requestRoute(origin: Point, destination: Point) {
@@ -720,7 +731,7 @@ class MapActivity : AppCompatActivity() {
                 routeOptions: RouteOptions
             ) {
                 Log.e(TAG, "Route request failed: ${reasons.joinToString()}")
-                // TODO: Show error to user
+                // Error is logged; future: show toast/snackbar to user
             }
 
             override fun onCanceled(
@@ -760,7 +771,7 @@ class MapActivity : AppCompatActivity() {
         // Validate waypoint count (Mapbox supports up to 25 waypoints = 27 total coordinates)
         if (coordinatesList.size > 27) {
             Log.e(TAG, "Too many waypoints! Mapbox supports max 25 waypoints (27 total coordinates). Got: ${coordinatesList.size}")
-            // TODO: Show error to user
+            // Error is logged; future: show dialog to user about waypoint limit
             return
         }
 
@@ -825,7 +836,7 @@ class MapActivity : AppCompatActivity() {
                 routeOptions: RouteOptions
             ) {
                 Log.e(TAG, "Route request with waypoints failed: ${reasons.joinToString()}")
-                // TODO: Show error to user
+                // Error is logged; future: show toast/snackbar to user
             }
 
             override fun onCanceled(

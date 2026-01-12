@@ -10,6 +10,7 @@ class RouteWhisperApplication : Application() {
 
         // Initialize MapboxNavigationApp for SDK v3
         // Access token is automatically read from res/values/mapbox_access_token.xml
+        // Note: Default arrival detection is 40 meters - waypoint arrivals should work
         if (!MapboxNavigationApp.isSetup()) {
             MapboxNavigationApp.setup {
                 NavigationOptions.Builder(this)

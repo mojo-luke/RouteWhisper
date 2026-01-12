@@ -13,7 +13,7 @@ class MainActivity : FlutterActivity() {
 
     companion object {
         // Static reference to method channel for use by other activities
-        private var methodChannelInstance: MethodChannel? = null
+        internal var methodChannelInstance: MethodChannel? = null
 
         fun sendRoutePolyline(polyline: String) {
             methodChannelInstance?.invokeMethod("setRoutePolyline", mapOf("polyline" to polyline))
@@ -119,7 +119,7 @@ class MainActivity : FlutterActivity() {
         result.success("Navigation started")
     }
 
-    private fun handleCalculateRoute(call: MethodCall, result: MethodChannel.Result) {
+    internal fun handleCalculateRoute(call: MethodCall, result: MethodChannel.Result) {
         val originLat = call.argument<Double>("originLat")
         val originLng = call.argument<Double>("originLng")
         val destLat = call.argument<Double>("destLat")

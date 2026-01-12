@@ -354,4 +354,70 @@ class WaypointManager {
         return '🔍';
     }
   }
+
+  /// Calculate waypoint progress data for current navigation leg
+  ///
+  /// This method centralizes all UI calculation logic for waypoint progress display.
+  /// Returns null if waypoint card should be hidden (final destination or no waypoints).
+  ///
+  /// [legIndex] - Current leg index from route progress (0-based)
+  /// [distanceMeters] - Distance remaining to waypoint in meters
+  /// [durationSeconds] - Duration remaining to waypoint in seconds
+  ///
+  /// Returns map with:
+  /// - name: Waypoint name (e.g., "Shell Gas Station")
+  /// - distanceMiles: Distance in miles (formatted to 1 decimal)
+  /// - etaMinutes: ETA in minutes (rounded)
+  /// - stopIndicator: Progress text (e.g., "Stop 1 of 3")
+  /// - shouldShow: Whether to display the waypoint card
+  Map<String, dynamic>? getWaypointProgressData({
+    required int legIndex,
+    required double distanceMeters,
+    required double durationSeconds,
+  }) {
+    // Get intermediate waypoints (exclude origin and destination)
+    final intermediateWaypoints = getIntermediateWaypoints();
+
+    if (intermediateWaypoints.isEmpty) {
+      return null; // No waypoints to show
+    }
+
+    // Calculate total legs (origin to wp1, wp1 to wp2, ..., wpN to destination)
+    final totalLegs = _waypoints.length - 1;
+
+    // Check if current leg points to an intermediate waypoint
+    // Leg 0 = origin → waypoint1
+    // Leg 1 = waypoint1 → waypoint2
+    // ...
+    // Leg N-1 = waypointN → destination (this one we hide)
+    final isIntermediateWaypoint = legIndex < totalLegs - 1;
+
+    if (!isIntermediateWaypoint) {
+      return null; // Approaching final destination, hide card
+    }
+
+    // Get waypoint for this leg
+    if (legIndex >= intermediateWaypoints.length) {
+      return null; // Invalid leg index
+    }
+
+    final waypoint = intermediateWaypoints[legIndex];
+
+    // Convert units
+    const metersToMiles = 0.000621371;
+    final distanceMiles = distanceMeters * metersToMiles;
+    final etaMinutes = (durationSeconds / 60).round();
+
+    return {
+      'name': waypoint.name,
+      'distanceMiles': distanceMiles,
+      'distanceFormatted': distanceMiles.toStringAsFixed(1),
+      'etaMinutes': etaMinutes,
+      'etaFormatted': '$etaMinutes min',
+      'stopNumber': legIndex + 1,
+      'totalStops': intermediateWaypoints.length,
+      'stopIndicator': 'Stop ${legIndex + 1} of ${intermediateWaypoints.length}',
+      'shouldShow': true,
+    };
+  }
 }

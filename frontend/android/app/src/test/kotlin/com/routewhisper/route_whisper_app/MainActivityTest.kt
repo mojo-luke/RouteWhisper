@@ -197,4 +197,112 @@ class MainActivityTest {
         // Assert - Verify success was called
         verify { result.success("Navigation cancelled") }
     }
+
+    @Test
+    fun `startNavigation with waypoints passes waypoint names to Intent`() {
+        // Arrange
+        val result = mockk<MethodChannel.Result>(relaxed = true)
+        val arguments = mapOf(
+            "originLat" to 37.7749,
+            "originLng" to -122.4194,
+            "destLat" to 34.0522,
+            "destLng" to -118.2437,
+            "waypoints" to listOf(
+                listOf(-122.0, 36.5),
+                listOf(-121.5, 36.0)
+            ),
+            "waypointNames" to listOf("Stop 1", "Stop 2")
+        )
+        val call = MethodCall("startNavigation", arguments)
+
+        // Act
+        activity.handleStartNavigation(call, result)
+
+        // Assert - verify Intent contains waypoint names
+        val shadowActivity = shadowOf(activity)
+        val startedIntent = shadowActivity.nextStartedActivity
+
+        assert(startedIntent != null) { "Intent should have been started" }
+
+        val waypointNames = startedIntent.getStringArrayExtra("waypointNames")
+        assert(waypointNames != null) { "Should pass waypointNames" }
+        assert(waypointNames!!.size == 2) { "Should have 2 waypoint names" }
+        assert(waypointNames[0] == "Stop 1") { "First waypoint name should match" }
+        assert(waypointNames[1] == "Stop 2") { "Second waypoint name should match" }
+
+        verify { result.success("Navigation started") }
+    }
+
+    @Test
+    fun `startNavigation without waypoint names works correctly`() {
+        // Arrange
+        val result = mockk<MethodChannel.Result>(relaxed = true)
+        val arguments = mapOf(
+            "originLat" to 37.7749,
+            "originLng" to -122.4194,
+            "destLat" to 34.0522,
+            "destLng" to -118.2437,
+            "waypoints" to listOf(
+                listOf(-122.0, 36.5)
+            )
+            // No waypointNames provided
+        )
+        val call = MethodCall("startNavigation", arguments)
+
+        // Act
+        activity.handleStartNavigation(call, result)
+
+        // Assert - should still work without names
+        val shadowActivity = shadowOf(activity)
+        val startedIntent = shadowActivity.nextStartedActivity
+
+        assert(startedIntent != null) { "Intent should have been started" }
+
+        val waypoints = startedIntent.getDoubleArrayExtra("waypoints")
+        assert(waypoints != null) { "Should pass waypoints" }
+        assert(waypoints!!.size == 2) { "Should have flat array of coordinates" }
+
+        // Waypoint names should be null or not present
+        val waypointNames = startedIntent.getStringArrayExtra("waypointNames")
+        // It's okay if waypointNames is null when not provided
+
+        verify { result.success("Navigation started") }
+    }
+
+    @Test
+    fun `calculateRoute with waypoint names passes them to Intent`() {
+        // Arrange
+        val result = mockk<MethodChannel.Result>(relaxed = true)
+        val arguments = mapOf(
+            "originLat" to 37.7749,
+            "originLng" to -122.4194,
+            "destLat" to 34.0522,
+            "destLng" to -118.2437,
+            "waypoints" to listOf(
+                listOf(-122.0, 36.5),
+                listOf(-121.5, 36.0),
+                listOf(-121.0, 35.5)
+            ),
+            "waypointNames" to listOf("Shell Gas Station", "Starbucks", "Scenic Viewpoint")
+        )
+        val call = MethodCall("calculateRoute", arguments)
+
+        // Act
+        activity.handleCalculateRoute(call, result)
+
+        // Assert - verify Intent contains waypoint names
+        val shadowActivity = shadowOf(activity)
+        val startedIntent = shadowActivity.nextStartedActivity
+
+        assert(startedIntent != null) { "Intent should have been started" }
+
+        val waypointNames = startedIntent.getStringArrayExtra("waypointNames")
+        assert(waypointNames != null) { "Should pass waypointNames" }
+        assert(waypointNames!!.size == 3) { "Should have 3 waypoint names" }
+        assert(waypointNames[0] == "Shell Gas Station") { "First waypoint name should match" }
+        assert(waypointNames[1] == "Starbucks") { "Second waypoint name should match" }
+        assert(waypointNames[2] == "Scenic Viewpoint") { "Third waypoint name should match" }
+
+        verify { result.success("Route calculation started") }
+    }
 }

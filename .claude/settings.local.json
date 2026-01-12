@@ -8,7 +8,29 @@
       "Bash(./gradlew :app:testDebugUnitTest:*)",
       "Bash(adb install:*)",
       "Bash(flutter clean:*)",
-      "Bash(flutter pub get:*)"
+      "Bash(flutter pub get:*)",
+      "Bash(adb shell am force-stop:*)",
+      "Bash(adb shell am start:*)",
+      "Bash(adb logcat:*)",
+      "Bash(adb shell:*)",
+      "Bash(cat:*)",
+      "Bash(xargs:*)",
+      "Bash(python -m pytest:*)",
+      "Bash(python3 -m pytest tests/test_poi_discovery.py -v --tb=short)",
+      "Bash(python3:*)",
+      "Bash(timeout 120 adb logcat:*)",
+      "Bash(source venv/bin/activate)",
+      "Bash(pip install:*)",
+      "Bash(docker-compose up:*)",
+      "Bash(docker compose:*)",
+      "Bash(uvicorn:*)",
+      "Bash(curl:*)",
+      "Bash(python test_poi_live.py:*)",
+      "Bash(tee:*)",
+      "Bash(./gradlew assembleDebug:*)",
+      "Bash(./gradlew clean:*)",
+      "Bash(flutter test:*)",
+      "Bash(flutter analyze:*)"
     ]
   }
 }
