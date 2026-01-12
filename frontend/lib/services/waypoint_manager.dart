@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';  // For ChangeNotifier
 import 'package:frontend/models/waypoint.dart';
 
 /// WaypointManager - Manages waypoint state and operations
@@ -9,10 +10,12 @@ import 'package:frontend/models/waypoint.dart';
 /// - Calculating trip duration with stops
 /// - Converting waypoints to Mapbox coordinates
 /// - Notifying listeners of changes
-class WaypointManager {
+class WaypointManager extends ChangeNotifier {
   List<Waypoint> _waypoints = [];
 
   /// Callback triggered when waypoints list changes
+  /// DEPRECATED: Use Provider Consumer/watch instead of callbacks
+  @Deprecated('Migrate to Provider - this will be removed after migration')
   Function(List<Waypoint>)? onWaypointsChanged;
 
   WaypointManager();
@@ -301,9 +304,13 @@ class WaypointManager {
 
   /// Notify listeners of waypoint changes
   void _notifyListeners() {
+    // Old callback system (backward compatibility during migration)
     if (onWaypointsChanged != null) {
       onWaypointsChanged!(_waypoints);
     }
+
+    // New Provider system
+    notifyListeners();  // Provider's built-in method
   }
 
   /// Debug: Print all waypoints

@@ -30,7 +30,8 @@
       "Bash(./gradlew assembleDebug:*)",
       "Bash(./gradlew clean:*)",
       "Bash(flutter test:*)",
-      "Bash(flutter analyze:*)"
+      "Bash(flutter analyze:*)",
+      "Bash(find:*)"
     ]
   }
 }

@@ -450,7 +450,23 @@ void main() {
     });
 
     group('Listener Notifications', () {
-      test('onWaypointsChanged callback is triggered on add', () {
+      test('notifies listeners when waypoints change (ChangeNotifier)', () {
+        bool notified = false;
+        manager.addListener(() {
+          notified = true;
+        });
+
+        manager.addWaypoint(Waypoint.manual(
+          name: 'Test',
+          latitude: 37.7749,
+          longitude: -122.4194,
+          order: 0,
+        ));
+
+        expect(notified, true);
+      });
+
+      test('onWaypointsChanged callback still works (deprecated)', () {
         List<Waypoint>? notifiedWaypoints;
         manager.onWaypointsChanged = (waypoints) {
           notifiedWaypoints = waypoints;

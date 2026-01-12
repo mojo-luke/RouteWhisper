@@ -46,6 +46,7 @@ class NavigationService {
   static Waypoint? _activeWaypoint;
 
   // Delegate to controller
+  static NavigationController get controller => _controller;
   static NavigationState get currentState => _controller.currentState;
   static bool get isNavigating => _controller.isNavigating;
   static RouteInfo? get currentRoute => _currentRoute;

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math';
+import 'package:flutter/foundation.dart';  // For ChangeNotifier
 import 'package:flutter/services.dart';
 import '../models/waypoint.dart';
 import 'navigation_service.dart';
@@ -25,7 +26,7 @@ class RoutePoint {
   String toString() => 'RoutePoint(lat: $lat, lng: $lng, bearing: $bearing)';
 }
 
-class NavigationController {
+class NavigationController extends ChangeNotifier {
   static const MethodChannel _channel = MethodChannel(
     'routewhisper.com/navigation',
   );
@@ -40,11 +41,16 @@ class NavigationController {
   static const Duration _simulationInterval = Duration(milliseconds: 1500);
   static const int _pointSkipCount = 3;
 
-  // Callbacks
+  // Callbacks (DEPRECATED - migrate to Provider)
+  @Deprecated('Use Provider Consumer/watch instead')
   Function(NavigationState)? onStateChanged;
+  @Deprecated('Use Provider Consumer/watch instead')
   Function(String)? onError;
+  @Deprecated('Use Provider Consumer/watch instead')
   Function(RoutePoint)? onLocationUpdate;
+  @Deprecated('Use Provider Consumer/watch instead')
   Function(String)? onRoutePolyline;
+  @Deprecated('Use Provider Consumer/watch instead')
   Function(Waypoint)? onWaypointArrival;
 
   NavigationState get currentState => _currentState;
@@ -80,12 +86,14 @@ class NavigationController {
         final data = Map<String, dynamic>.from(call.arguments as Map);
         final error = data['error'] as String;
         onError?.call(error);
+        notifyListeners();  // Notify Provider of error
         break;
       case 'setRoutePolyline':
         final data = Map<String, dynamic>.from(call.arguments as Map);
         final polyline = data['polyline'] as String;
         print('📍 Received route polyline from Android: ${polyline.substring(0, polyline.length > 50 ? 50 : polyline.length)}...');
         onRoutePolyline?.call(polyline);
+        notifyListeners();  // Notify Provider of route polyline
         break;
       case 'waypointArrived':
         final data = Map<String, dynamic>.from(call.arguments as Map);
@@ -155,6 +163,7 @@ class NavigationController {
   Future<void> startNavigation() async {
     if (_currentState != NavigationState.ready) {
       onError?.call('Cannot start navigation from state: $_currentState');
+      notifyListeners();  // Notify Provider of error
       return;
     }
 
@@ -200,7 +209,12 @@ class NavigationController {
     if (_currentState != newState) {
       print('🎯 State change: $_currentState -> $newState');
       _currentState = newState;
+
+      // Old callback (backward compatibility)
       onStateChanged?.call(newState);
+
+      // New Provider notification
+      notifyListeners();
     }
   }
 
@@ -303,6 +317,7 @@ class NavigationController {
   void _startSimulation() {
     if (_routePoints.isEmpty) {
       onError?.call('No route points for simulation');
+      notifyListeners();  // Notify Provider of error
       return;
     }
 
