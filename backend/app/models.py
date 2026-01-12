@@ -6,6 +6,7 @@ Pydantic models for POI discovery API requests and responses
 from pydantic import BaseModel, Field
 from typing import List, Optional
 from enum import Enum
+from datetime import datetime
 
 
 class POICategory(str, Enum):
@@ -138,6 +139,53 @@ class POIResponse(BaseModel):
                 "total_found": 15,
                 "cached": False,
                 "corridor_bounds": [-122.5, 37.7, -122.3, 37.9]
+            }
+        }
+
+
+class WaypointStopHistory(BaseModel):
+    """Historical data about user stops at waypoints for personalization"""
+    user_id: Optional[str] = Field(default=None, description="User ID for future personalization")
+    waypoint_id: str = Field(..., description="Unique waypoint identifier")
+    waypoint_name: str = Field(..., description="Waypoint name")
+    waypoint_category: Optional[str] = Field(default=None, description="POI category if applicable")
+    latitude: float = Field(..., ge=-90, le=90, description="Waypoint latitude")
+    longitude: float = Field(..., ge=-180, le=180, description="Waypoint longitude")
+
+    # Planned vs Actual
+    planned_duration_minutes: int = Field(..., ge=0, description="User's planned stop duration")
+    actual_duration_minutes: int = Field(..., ge=0, description="Actual stop duration")
+    duration_difference_minutes: Optional[int] = Field(default=None, description="Actual - planned duration")
+
+    # Timestamps
+    arrival_time: datetime = Field(..., description="Timestamp of arrival at waypoint")
+    departure_time: datetime = Field(..., description="Timestamp of departure from waypoint")
+
+    # Context for analytics
+    day_of_week: Optional[int] = Field(default=None, ge=0, le=6, description="0=Monday, 6=Sunday")
+    hour_of_day: Optional[int] = Field(default=None, ge=0, le=23, description="Hour of arrival (0-23)")
+    is_weekend: Optional[bool] = Field(default=None, description="Whether stop was on weekend")
+    is_automatic_departure: Optional[bool] = Field(default=False, description="True if departure was auto-detected")
+
+    # Trip context
+    waypoint_order: int = Field(..., ge=0, description="Position in route (0-based)")
+    total_waypoints: Optional[int] = Field(default=None, ge=0, description="Total waypoints in trip")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "waypoint_id": "wp_123abc",
+                "waypoint_name": "In-N-Out Burger",
+                "waypoint_category": "restaurant",
+                "latitude": 37.8044,
+                "longitude": -122.4156,
+                "planned_duration_minutes": 30,
+                "actual_duration_minutes": 45,
+                "arrival_time": "2026-01-10T12:00:00",
+                "departure_time": "2026-01-10T12:45:00",
+                "is_automatic_departure": False,
+                "waypoint_order": 1,
+                "total_waypoints": 3
             }
         }
 

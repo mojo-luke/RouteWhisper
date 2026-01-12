@@ -3,18 +3,22 @@ RouteWhisper Backend API
 Main FastAPI application entry point
 """
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import redis.asyncio as aioredis
 import os
+import logging
 from dotenv import load_dotenv
+
+# Set up logging
+logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
 
 # Import POI models and services
-from app.models import POIRequest, POIResponse, POICategory
+from app.models import POIRequest, POIResponse, POICategory, WaypointStopHistory
 from app.services.mapbox_search import MapboxSearchService
 from app.services.poi_ranking import POIRankingService
 from app.services.cache import POICacheService
@@ -253,6 +257,136 @@ async def analyze_route():
         "message": "This endpoint is deprecated. Use POST /api/v1/route/pois instead",
         "new_endpoint": "/api/v1/route/pois"
     }
+
+@app.get("/api/v1/search/geocode")
+async def geocode_place(
+    query: str,
+    proximity: str = None,  # Optional: "lng,lat" format for biasing results
+    limit: int = 5
+):
+    """
+    Search for a place by name or address using Mapbox Geocoding API.
+
+    Args:
+        query: Search query (place name or address)
+        proximity: Optional "lng,lat" to bias results near a location
+        limit: Maximum number of results (default 5, max 10)
+
+    Returns:
+        List of search results with coordinates and details
+
+    Example:
+        GET /api/v1/search/geocode?query=Starbucks San Francisco&limit=5
+    """
+    import httpx
+
+    try:
+        mapbox_token = os.getenv("MAPBOX_ACCESS_TOKEN")
+        if not mapbox_token:
+            raise HTTPException(status_code=500, detail="Mapbox token not configured")
+
+        # Build Mapbox Geocoding API request
+        url = f"https://api.mapbox.com/geocoding/v5/mapbox.places/{query}.json"
+        params = {
+            "access_token": mapbox_token,
+            "limit": min(limit, 10),
+            "types": "poi,address,place"  # Search POIs, addresses, and places
+        }
+
+        if proximity:
+            params["proximity"] = proximity
+
+        # Make request to Mapbox
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
+
+        # Parse results
+        results = []
+        for feature in data.get("features", []):
+            coords = feature.get("geometry", {}).get("coordinates", [])
+            if len(coords) == 2:
+                lng, lat = coords
+                results.append({
+                    "name": feature.get("place_name", "Unknown"),
+                    "address": feature.get("place_name"),
+                    "latitude": lat,
+                    "longitude": lng,
+                    "place_type": feature.get("place_type", []),
+                    "relevance": feature.get("relevance", 0.0),
+                })
+
+        return {
+            "success": True,
+            "query": query,
+            "results": results,
+            "count": len(results)
+        }
+
+    except httpx.HTTPStatusError as e:
+        logger.error(f"Mapbox Geocoding API error: {e.response.status_code} - {e.response.text}")
+        raise HTTPException(status_code=502, detail=f"Geocoding service error: {e.response.status_code}")
+    except Exception as e:
+        logger.error(f"Geocoding failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/v1/waypoints/history")
+async def record_waypoint_stop(history: WaypointStopHistory):
+    """
+    Record historical stop data for personalization.
+
+    This endpoint receives data about user stops at waypoints to enable:
+    - Average stop time by category
+    - User preferences (always skip coffee, always stop at scenic)
+    - Time-of-day patterns
+    - Day-of-week patterns
+
+    Phase 4: Currently logs data only (MongoDB storage will be added in Phase 6)
+    """
+    try:
+        # Calculate derived fields
+        if history.duration_difference_minutes is None:
+            history.duration_difference_minutes = (
+                history.actual_duration_minutes - history.planned_duration_minutes
+            )
+
+        # Calculate time context if not provided
+        if history.day_of_week is None:
+            history.day_of_week = history.arrival_time.weekday()
+        if history.hour_of_day is None:
+            history.hour_of_day = history.arrival_time.hour
+        if history.is_weekend is None:
+            history.is_weekend = history.day_of_week >= 5
+
+        # Log the stop data (MongoDB storage in Phase 6)
+        logger.info(
+            f"📊 Stop recorded: {history.waypoint_name} "
+            f"(planned: {history.planned_duration_minutes}min, "
+            f"actual: {history.actual_duration_minutes}min, "
+            f"diff: {history.duration_difference_minutes:+d}min, "
+            f"auto: {history.is_automatic_departure})"
+        )
+        logger.info(
+            f"   📍 Location: ({history.latitude}, {history.longitude})"
+        )
+        logger.info(
+            f"   📅 Time: {history.arrival_time.strftime('%A %I:%M%p')} "
+            f"(day {history.day_of_week}, hour {history.hour_of_day})"
+        )
+        if history.waypoint_category:
+            logger.info(f"   🏷️  Category: {history.waypoint_category}")
+
+        return {
+            "success": True,
+            "stop_id": history.waypoint_id,
+            "message": "Stop history recorded successfully",
+            "note": "Currently logging only - MongoDB storage will be added in Phase 6"
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to record stop history: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to record stop history: {str(e)}")
 
 @app.get("/api/v1/poi/facts")
 async def get_poi_facts():

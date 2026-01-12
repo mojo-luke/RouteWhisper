@@ -2,6 +2,10 @@ import 'package:flutter/material.dart';
 import '../services/navigation_service.dart';
 import '../widgets/route_input_dialog.dart';
 import '../widgets/poi_dashboard.dart';
+import '../widgets/waypoint_list.dart';
+import '../widgets/edit_stop_duration_dialog.dart';
+import '../widgets/search_waypoint_dialog.dart';
+import '../models/waypoint.dart';
 import 'active_navigation_screen.dart';
 
 class NavigationDashboard extends StatefulWidget {
@@ -15,6 +19,7 @@ class _NavigationDashboardState extends State<NavigationDashboard> {
   NavigationState _currentState = NavigationState.idle;
   String _statusMessage = 'Ready to navigate';
   String? _errorMessage;
+  List<Waypoint> _waypoints = [];
 
   @override
   void initState() {
@@ -48,6 +53,16 @@ class _NavigationDashboardState extends State<NavigationDashboard> {
         });
       },
     );
+
+    // Listen for waypoint changes
+    NavigationService.waypointManager.onWaypointsChanged = (waypoints) {
+      setState(() {
+        _waypoints = waypoints;
+      });
+    };
+
+    // Get initial waypoints
+    _waypoints = NavigationService.waypointManager.getWaypoints();
   }
 
   String _getStatusMessage(NavigationState state) {
@@ -253,44 +268,520 @@ class _NavigationDashboardState extends State<NavigationDashboard> {
   }
 
   Widget _buildNavigationControls() {
-    return Column(
-      children: [
-        // Primary Action Button
-        _buildPrimaryActionButton(),
-        const SizedBox(height: 20),
+    return SingleChildScrollView(
+      child: Column(
+        children: [
+          // Primary Action Button
+          _buildPrimaryActionButton(),
+          const SizedBox(height: 20),
 
-        // Secondary Actions
-        Row(
-          children: [
-            Expanded(child: _buildOpenMapButton()),
-            const SizedBox(width: 16),
-            Expanded(child: _buildQuickNavigationButton()),
-          ],
-        ),
-
-        const SizedBox(height: 16),
-
-        // POI Discovery Button (Debug: showing unconditionally for now)
-        _buildDiscoverPOIsButton(),
-        const SizedBox(height: 8),
-        // Debug info
-        if (NavigationService.routePolyline != null)
-          Text(
-            'Route polyline available (${NavigationService.routePolyline!.length} chars)',
-            style: TextStyle(color: Colors.green, fontSize: 10),
-          )
-        else
-          const Text(
-            'Waiting for route polyline...',
-            style: TextStyle(color: Colors.orange, fontSize: 10),
+          // Secondary Actions
+          Row(
+            children: [
+              Expanded(child: _buildOpenMapButton()),
+              const SizedBox(width: 16),
+              Expanded(child: _buildQuickNavigationButton()),
+            ],
           ),
 
-        const SizedBox(height: 16),
+          const SizedBox(height: 16),
 
-        // Cancel Button (when applicable)
-        if (NavigationService.canCancel) ...[_buildCancelButton()],
+          // POI Discovery Button (Debug: showing unconditionally for now)
+          _buildDiscoverPOIsButton(),
+          const SizedBox(height: 8),
+          // Debug info
+          if (NavigationService.routePolyline != null)
+            Text(
+              'Route polyline available (${NavigationService.routePolyline!.length} chars)',
+              style: TextStyle(color: Colors.green, fontSize: 10),
+            )
+          else
+            const Text(
+              'Waiting for route polyline...',
+              style: TextStyle(color: Colors.orange, fontSize: 10),
+            ),
+
+          const SizedBox(height: 24),
+
+          // Waypoint List (if there are waypoints)
+          if (NavigationService.hasWaypoints) ...[
+            // Visual separator before waypoints
+            Row(
+              children: [
+                Expanded(
+                  child: Container(
+                    height: 1,
+                    color: Colors.white24,
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Text(
+                    'ROUTE STOPS',
+                    style: TextStyle(
+                      color: Colors.blue.shade300,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 1.5,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: Container(
+                    height: 1,
+                    color: Colors.white24,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            _buildWaypointSection(),
+            const SizedBox(height: 24),
+            // Visual separator after waypoints
+            Container(
+              height: 1,
+              color: Colors.white24,
+            ),
+            const SizedBox(height: 16),
+          ],
+
+          // Cancel Button (when applicable)
+          if (NavigationService.canCancel) ...[_buildCancelButton()],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWaypointSection() {
+    final intermediateWaypoints = _waypoints
+        .where((wp) =>
+            wp.type != WaypointType.origin && wp.type != WaypointType.destination)
+        .toList();
+
+    // Calculate total stop time
+    final stopSummary = NavigationService.waypointManager.getStopSummary();
+    final totalStopMinutes = stopSummary['totalStopMinutes'] as int;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF2D2D2D),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: Colors.blue.withOpacity(0.3),
+          width: 1,
+        ),
+      ),
+      child: Column(
+        children: [
+          // Header with count
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [Colors.blue.withOpacity(0.2), Colors.blue.withOpacity(0.05)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(12),
+                topRight: Radius.circular(12),
+              ),
+            ),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.blue.withOpacity(0.3),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Icon(Icons.alt_route, color: Colors.blue, size: 20),
+                    ),
+                    const SizedBox(width: 12),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Your Route Stops',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        Text(
+                          '${intermediateWaypoints.length} ${intermediateWaypoints.length == 1 ? 'stop' : 'stops'} planned',
+                          style: TextStyle(
+                            color: Colors.grey.shade400,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const Spacer(),
+                    IconButton(
+                      onPressed: () {
+                        // Show full waypoint list in dialog
+                        _showWaypointListDialog();
+                      },
+                      icon: const Icon(Icons.settings, color: Colors.blue, size: 20),
+                      tooltip: 'Manage Waypoints',
+                    ),
+                  ],
+                ),
+                // Trip time summary
+                if (totalStopMinutes > 0) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.3),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: Colors.green.withOpacity(0.3),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceAround,
+                      children: [
+                        _buildTripSummaryItem(
+                          icon: Icons.directions_car,
+                          label: 'Stops',
+                          value: '${intermediateWaypoints.length}',
+                          color: Colors.blue,
+                        ),
+                        Container(
+                          width: 1,
+                          height: 30,
+                          color: Colors.white24,
+                        ),
+                        _buildTripSummaryItem(
+                          icon: Icons.access_time,
+                          label: 'Stop Time',
+                          value: _formatStopDuration(totalStopMinutes),
+                          color: Colors.orange,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+
+          // Compact waypoint preview (first 3)
+          if (intermediateWaypoints.isNotEmpty)
+            Container(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                children: [
+                  for (int i = 0; i < intermediateWaypoints.length.clamp(0, 3); i++)
+                    _buildCompactWaypointItem(intermediateWaypoints[i], i),
+                  if (intermediateWaypoints.length > 3)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(
+                        '+${intermediateWaypoints.length - 3} more',
+                        style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+
+          // Action buttons
+          Container(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+            child: Row(
+              children: [
+                // Search Place button
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _showSearchWaypointDialog,
+                    icon: const Icon(Icons.search, size: 18),
+                    label: const Text('Search Place'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.blue,
+                      side: const BorderSide(color: Colors.blue),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                // Recalculate Route button
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: _recalculateRouteWithWaypoints,
+                    icon: const Icon(Icons.refresh, size: 18),
+                    label: const Text('Recalculate'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCompactWaypointItem(Waypoint waypoint, int index) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.3),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          CircleAvatar(
+            radius: 12,
+            backgroundColor: Colors.blue,
+            child: Text(
+              '${index + 1}',
+              style: const TextStyle(color: Colors.white, fontSize: 10),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  waypoint.name,
+                  style: const TextStyle(color: Colors.white, fontSize: 13),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                Text(
+                  '${waypoint.estimatedDurationMinutes} min stop',
+                  style: TextStyle(color: Colors.grey.shade400, fontSize: 11),
+                ),
+              ],
+            ),
+          ),
+          Icon(waypoint.sourcePOI?.categoryIcon != null
+              ? Icons.place
+              : Icons.edit_location,
+            color: Colors.blue,
+            size: 16,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTripSummaryItem({
+    required IconData icon,
+    required String label,
+    required String value,
+    required Color color,
+  }) {
+    return Column(
+      children: [
+        Icon(icon, size: 20, color: color),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+            color: color,
+          ),
+        ),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 11,
+            color: Colors.grey.shade400,
+          ),
+        ),
       ],
     );
+  }
+
+  String _formatStopDuration(int minutes) {
+    if (minutes < 60) {
+      return '$minutes min';
+    } else {
+      final hours = minutes ~/ 60;
+      final mins = minutes % 60;
+      return mins > 0 ? '${hours}h ${mins}m' : '${hours}h';
+    }
+  }
+
+  void _showWaypointListDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF2D2D2D),
+        title: const Text(
+          'Manage Waypoints',
+          style: TextStyle(color: Colors.white),
+        ),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: WaypointListWithHeader(
+            waypoints: _waypoints,
+            allowEditing: true,
+            onEdit: (waypoint) => _editStopDuration(waypoint),
+            onRemove: (waypoint) {
+              NavigationService.waypointManager.removeWaypoint(waypoint.id);
+              // Rebuild dialog
+              Navigator.pop(context);
+              _showWaypointListDialog();
+            },
+            onReorder: (oldIndex, newIndex) {
+              NavigationService.waypointManager.reorderWaypoint(oldIndex, newIndex);
+            },
+            onClearAll: () {
+              NavigationService.waypointManager.clearIntermediateWaypoints();
+              Navigator.pop(context);
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _recalculateRouteWithWaypoints();
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+            child: const Text('Recalculate Route'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _editStopDuration(Waypoint waypoint) {
+    showDialog(
+      context: context,
+      builder: (context) => EditStopDurationDialog(
+        waypoint: waypoint,
+        onDurationChanged: (newDuration) {
+          final updatedWaypoint = waypoint.copyWith(
+            estimatedDurationMinutes: newDuration,
+          );
+          NavigationService.waypointManager.updateWaypoint(updatedWaypoint);
+
+          // Show confirmation
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Stop duration updated to $newDuration minutes'),
+              backgroundColor: Colors.blue,
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  void _showSearchWaypointDialog() {
+    final nextOrder = NavigationService.waypointManager.getWaypoints().length;
+
+    showDialog(
+      context: context,
+      builder: (context) => SearchWaypointDialog(
+        nextOrder: nextOrder,
+        onWaypointAdded: (waypoint) {
+          // Add waypoint to manager
+          NavigationService.waypointManager.addWaypoint(waypoint);
+
+          // Show confirmation
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Row(
+                children: [
+                  const Icon(Icons.check_circle, color: Colors.white),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text(
+                          'Stop Added',
+                          style: TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        Text('${waypoint.name} added to your route'),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              backgroundColor: Colors.green,
+              duration: const Duration(seconds: 3),
+              action: SnackBarAction(
+                label: 'Undo',
+                textColor: Colors.white,
+                onPressed: () {
+                  NavigationService.waypointManager.removeWaypoint(waypoint.id);
+                },
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Future<void> _recalculateRouteWithWaypoints() async {
+    if (NavigationService.currentRoute == null) {
+      _showErrorSnackBar('No active route. Please plan a route first.');
+      return;
+    }
+
+    final route = NavigationService.currentRoute!;
+
+    setState(() {
+      _currentState = NavigationState.calculating;
+      _statusMessage = 'Recalculating route with waypoints...';
+    });
+
+    try {
+      // Use startNavigationWithWaypoints which handles everything
+      await NavigationService.startNavigationWithWaypoints(
+        originLat: route.originLat,
+        originLng: route.originLng,
+        destLat: route.destLat,
+        destLng: route.destLng,
+      );
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Row(
+            children: [
+              Icon(Icons.check_circle, color: Colors.white),
+              SizedBox(width: 12),
+              Text('Route recalculated with waypoints!'),
+            ],
+          ),
+          backgroundColor: Colors.green,
+          duration: Duration(seconds: 3),
+        ),
+      );
+    } catch (e) {
+      _showErrorSnackBar('Failed to recalculate route: $e');
+    }
   }
 
   Widget _buildPrimaryActionButton() {
@@ -382,7 +873,7 @@ class _NavigationDashboardState extends State<NavigationDashboard> {
       child: ElevatedButton.icon(
         onPressed: () => _startSampleNavigation(),
         icon: const Icon(Icons.near_me, size: 20),
-        label: const Text('Sample Route'),
+        label: const Text('Test Route (10 min)'),
         style: ElevatedButton.styleFrom(
           backgroundColor: const Color(0xFF3D3D3D),
           foregroundColor: Colors.white,
@@ -513,25 +1004,28 @@ class _NavigationDashboardState extends State<NavigationDashboard> {
   }
 
   void _startSampleNavigation() async {
+    // Short test route: SF Embarcadero to Fisherman's Wharf (~2.5 miles, 10 min)
+    // Passes by: Ferry Building, restaurants, cafes, Pier 39
+    // Perfect for testing waypoint arrivals with lots of POIs!
     await NavigationService.startNavigation(
-      originLat: 37.7749,
-      originLng: -122.4194,
-      destLat: 34.0522,
-      destLng: -118.2437,
+      originLat: 37.7955,  // Embarcadero Center
+      originLng: -122.3937,
+      destLat: 37.8080,     // Fisherman's Wharf
+      destLng: -122.4177,
     );
   }
 
   void _launchNavigation() {
-    // Launch Flutter navigation screen with sample coordinates
-    // TODO: Pass actual route coordinates when available
+    // Launch Flutter navigation screen
+    // Uses short test route for easier waypoint testing
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (context) => const ActiveNavigationScreen(
-          originLat: 37.7749,  // San Francisco
-          originLng: -122.4194,
-          destLat: 34.0522,     // Los Angeles
-          destLng: -118.2437,
+          originLat: 37.7955,  // Embarcadero Center
+          originLng: -122.3937,
+          destLat: 37.8080,     // Fisherman's Wharf
+          destLng: -122.4177,
         ),
       ),
     );

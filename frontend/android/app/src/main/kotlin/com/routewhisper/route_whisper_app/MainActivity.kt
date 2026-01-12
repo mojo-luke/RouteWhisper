@@ -19,6 +19,38 @@ class MainActivity : FlutterActivity() {
             methodChannelInstance?.invokeMethod("setRoutePolyline", mapOf("polyline" to polyline))
             Log.d("MainActivity", "Sent route polyline to Flutter (${polyline.length} chars)")
         }
+
+        fun sendWaypointArrived(legIndex: Int, latitude: Double, longitude: Double) {
+            if (methodChannelInstance == null) {
+                Log.e("MainActivity", "❌ methodChannelInstance is NULL! Cannot send waypoint arrival")
+                return
+            }
+
+            Log.d("MainActivity", "Invoking waypointArrived method channel for leg $legIndex")
+            methodChannelInstance?.invokeMethod("waypointArrived", mapOf(
+                "legIndex" to legIndex,
+                "latitude" to latitude,
+                "longitude" to longitude,
+                "timestamp" to System.currentTimeMillis()
+            ))
+            Log.d("MainActivity", "✅ Sent waypoint arrival to Flutter: leg $legIndex")
+        }
+
+        fun sendAutoDepartureDetected(distance: Double, speed: Double) {
+            methodChannelInstance?.invokeMethod("autoDepartureDetected", mapOf(
+                "distance" to distance,
+                "speed" to speed,
+                "timestamp" to System.currentTimeMillis()
+            ))
+            Log.d("MainActivity", "Sent auto-departure to Flutter: ${distance}m, ${speed}mph")
+        }
+
+        fun sendDestinationArrived() {
+            methodChannelInstance?.invokeMethod("destinationArrived", mapOf(
+                "timestamp" to System.currentTimeMillis()
+            ))
+            Log.d("MainActivity", "Sent destination arrival to Flutter")
+        }
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -45,20 +77,42 @@ class MainActivity : FlutterActivity() {
         val originLng = call.argument<Double>("originLng")
         val destLat = call.argument<Double>("destLat")
         val destLng = call.argument<Double>("destLng")
+        val waypoints = call.argument<List<List<Double>>>("waypoints") // [[lng, lat], [lng, lat], ...]
+        val waypointNames = call.argument<List<String>>("waypointNames") // ["Name 1", "Name 2", ...]
 
         if (originLat == null || originLng == null || destLat == null || destLng == null) {
             result.error("INVALID_ARGS", "Missing coordinates", null)
             return
         }
 
-        Log.d("MainActivity", "Starting navigation: ($originLat, $originLng) -> ($destLat, $destLng)")
+        if (waypoints != null && waypoints.isNotEmpty()) {
+            Log.d("MainActivity", "Starting navigation with ${waypoints.size} waypoints: ($originLat, $originLng) -> ($destLat, $destLng)")
+            if (waypointNames != null && waypointNames.isNotEmpty()) {
+                Log.d("MainActivity", "Waypoint names: $waypointNames")
+            }
+        } else {
+            Log.d("MainActivity", "Starting navigation: ($originLat, $originLng) -> ($destLat, $destLng)")
+        }
 
-        // Launch MapActivity with coordinates
+        // Launch MapActivity with coordinates and waypoints
         val intent = Intent(this, MapActivity::class.java).apply {
             putExtra("originLat", originLat)
             putExtra("originLng", originLng)
             putExtra("destLat", destLat)
             putExtra("destLng", destLng)
+
+            // Pass waypoints as flat array: [lng1, lat1, lng2, lat2, ...]
+            if (waypoints != null && waypoints.isNotEmpty()) {
+                val flatWaypoints = waypoints.flatten().toDoubleArray()
+                putExtra("waypoints", flatWaypoints)
+                Log.d("MainActivity", "Passing ${waypoints.size} waypoints to MapActivity")
+
+                // Pass waypoint names as String array
+                if (waypointNames != null && waypointNames.isNotEmpty()) {
+                    putExtra("waypointNames", waypointNames.toTypedArray())
+                    Log.d("MainActivity", "Passing ${waypointNames.size} waypoint names to MapActivity")
+                }
+            }
         }
         startActivity(intent)
 
@@ -70,20 +124,42 @@ class MainActivity : FlutterActivity() {
         val originLng = call.argument<Double>("originLng")
         val destLat = call.argument<Double>("destLat")
         val destLng = call.argument<Double>("destLng")
+        val waypoints = call.argument<List<List<Double>>>("waypoints") // [[lng, lat], [lng, lat], ...]
+        val waypointNames = call.argument<List<String>>("waypointNames") // ["Name 1", "Name 2", ...]
 
         if (originLat == null || originLng == null || destLat == null || destLng == null) {
             result.error("INVALID_ARGS", "Missing coordinates", null)
             return
         }
 
-        Log.d("MainActivity", "Calculate route: ($originLat, $originLng) -> ($destLat, $destLng)")
+        if (waypoints != null && waypoints.isNotEmpty()) {
+            Log.d("MainActivity", "Calculate route with ${waypoints.size} waypoints: ($originLat, $originLng) -> ($destLat, $destLng)")
+            if (waypointNames != null && waypointNames.isNotEmpty()) {
+                Log.d("MainActivity", "Waypoint names: $waypointNames")
+            }
+        } else {
+            Log.d("MainActivity", "Calculate route: ($originLat, $originLng) -> ($destLat, $destLng)")
+        }
 
-        // For now, launch MapActivity which will handle route calculation
+        // Launch MapActivity which will handle route calculation with waypoints
         val intent = Intent(this, MapActivity::class.java).apply {
             putExtra("originLat", originLat)
             putExtra("originLng", originLng)
             putExtra("destLat", destLat)
             putExtra("destLng", destLng)
+
+            // Pass waypoints as flat array: [lng1, lat1, lng2, lat2, ...]
+            if (waypoints != null && waypoints.isNotEmpty()) {
+                val flatWaypoints = waypoints.flatten().toDoubleArray()
+                putExtra("waypoints", flatWaypoints)
+                Log.d("MainActivity", "Passing ${waypoints.size} waypoints for route calculation")
+
+                // Pass waypoint names as String array
+                if (waypointNames != null && waypointNames.isNotEmpty()) {
+                    putExtra("waypointNames", waypointNames.toTypedArray())
+                    Log.d("MainActivity", "Passing ${waypointNames.size} waypoint names for route calculation")
+                }
+            }
         }
         startActivity(intent)
 

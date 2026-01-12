@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/navigation_service.dart';
 import '../services/poi_api_service.dart';
+import '../models/waypoint.dart';
 import 'poi_suggestion_card.dart';
 
 /// POI Dashboard Widget
@@ -257,6 +258,58 @@ class _POIDashboardState extends State<POIDashboard> {
     );
   }
 
+  /// Add POI as waypoint to the route
+  void _addPOIAsWaypoint(POI poi) {
+    // Create waypoint from POI
+    final waypoint = Waypoint.fromPOI(
+      poi,
+      NavigationService.waypointManager.getWaypoints().length,
+    );
+
+    // Add to waypoint manager
+    NavigationService.waypointManager.addWaypoint(waypoint);
+
+    // Close the details sheet
+    Navigator.pop(context);
+
+    // Show success message
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.check_circle, color: Colors.white),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    'Waypoint Added',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  Text('${poi.name} added to your route'),
+                ],
+              ),
+            ),
+          ],
+        ),
+        backgroundColor: Colors.green,
+        duration: const Duration(seconds: 3),
+        action: SnackBarAction(
+          label: 'Undo',
+          textColor: Colors.white,
+          onPressed: () {
+            // Remove the waypoint
+            NavigationService.waypointManager.removeWaypoint(waypoint.id);
+          },
+        ),
+      ),
+    );
+
+    print('📍 POI added as waypoint: ${poi.name}');
+  }
+
   /// Show detailed POI information in a bottom sheet
   void _showPOIDetails(POI poi) {
     showModalBottomSheet(
@@ -331,7 +384,7 @@ class _POIDashboardState extends State<POIDashboard> {
                   const SizedBox(width: 12),
                   Expanded(
                     child: ElevatedButton.icon(
-                      onPressed: null, // TODO: Add waypoint functionality
+                      onPressed: () => _addPOIAsWaypoint(poi),
                       icon: const Icon(Icons.add_location_alt),
                       label: const Text('Add Stop'),
                     ),

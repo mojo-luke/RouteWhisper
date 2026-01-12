@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
@@ -16,6 +17,76 @@
         android:layout_height="wrap_content"
         android:layout_alignParentTop="true"
         android:layout_margin="16dp" />
+
+    <!-- Waypoint Progress Card - Shows next waypoint info (Google Maps style) -->
+    <androidx.cardview.widget.CardView
+        android:id="@+id/waypointProgressCard"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_below="@id/maneuverView"
+        android:layout_margin="16dp"
+        android:layout_marginTop="8dp"
+        android:visibility="gone"
+        app:cardElevation="4dp"
+        app:cardCornerRadius="12dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <!-- Waypoint name -->
+            <TextView
+                android:id="@+id/waypointNameText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Next stop: Shell Gas Station"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:textColor="@android:color/black" />
+
+            <!-- Distance and ETA row -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:orientation="horizontal">
+
+                <!-- Distance -->
+                <TextView
+                    android:id="@+id/waypointDistanceText"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="2.3 mi"
+                    android:textSize="14sp"
+                    android:textColor="@android:color/darker_gray" />
+
+                <!-- ETA -->
+                <TextView
+                    android:id="@+id/waypointEtaText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="5 min"
+                    android:textSize="14sp"
+                    android:textColor="@android:color/darker_gray" />
+
+                <!-- Stop indicator -->
+                <TextView
+                    android:id="@+id/waypointStopIndicator"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:text="Stop 1 of 3"
+                    android:textSize="12sp"
+                    android:textColor="@android:color/darker_gray" />
+
+            </LinearLayout>
+
+        </LinearLayout>
+
+    </androidx.cardview.widget.CardView>
 
     <!-- Trip Progress View - ETA/distance at bottom -->
     <com.mapbox.navigation.ui.components.tripprogress.view.MapboxTripProgressView

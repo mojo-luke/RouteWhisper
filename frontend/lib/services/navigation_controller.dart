@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:math';
 import 'package:flutter/services.dart';
+import '../models/waypoint.dart';
+import 'navigation_service.dart';
 
 enum NavigationState {
   idle,
@@ -43,6 +45,7 @@ class NavigationController {
   Function(String)? onError;
   Function(RoutePoint)? onLocationUpdate;
   Function(String)? onRoutePolyline;
+  Function(Waypoint)? onWaypointArrival;
 
   NavigationState get currentState => _currentState;
   bool get isNavigating => _currentState == NavigationState.navigating;
@@ -84,6 +87,17 @@ class NavigationController {
         print('📍 Received route polyline from Android: ${polyline.substring(0, polyline.length > 50 ? 50 : polyline.length)}...');
         onRoutePolyline?.call(polyline);
         break;
+      case 'waypointArrived':
+        final data = Map<String, dynamic>.from(call.arguments as Map);
+        _handleWaypointArrived(data);
+        break;
+      case 'autoDepartureDetected':
+        final data = Map<String, dynamic>.from(call.arguments as Map);
+        _handleAutoDeparture(data);
+        break;
+      case 'destinationArrived':
+        _handleDestinationArrived();
+        break;
     }
   }
 
@@ -93,17 +107,37 @@ class NavigationController {
     required double originLng,
     required double destLat,
     required double destLng,
+    List<List<double>>? waypoints, // [[lng, lat], [lng, lat], ...]
+    List<String>? waypointNames, // ["Name 1", "Name 2", ...]
   }) async {
-    print('🎯 Calculating route from Flutter');
+    if (waypoints != null && waypoints.isNotEmpty) {
+      print('🎯 Calculating route with ${waypoints.length} waypoints from Flutter');
+      if (waypointNames != null) {
+        print('📍 Waypoint names: $waypointNames');
+      }
+    } else {
+      print('🎯 Calculating route from Flutter');
+    }
     _setState(NavigationState.calculating);
 
     try {
-      final result = await _channel.invokeMethod('calculateRoute', {
+      final Map<String, dynamic> params = {
         'originLat': originLat,
         'originLng': originLng,
         'destLat': destLat,
         'destLng': destLng,
-      });
+      };
+
+      // Add waypoints if provided
+      if (waypoints != null && waypoints.isNotEmpty) {
+        params['waypoints'] = waypoints;
+        // Add waypoint names if provided
+        if (waypointNames != null && waypointNames.isNotEmpty) {
+          params['waypointNames'] = waypointNames;
+        }
+      }
+
+      final result = await _channel.invokeMethod('calculateRoute', params);
 
       return result?.toString();
     } catch (e) {
@@ -190,6 +224,50 @@ class NavigationController {
 
   void _handleLocationUpdate(Map<String, dynamic> data) {
     // Handle any location updates from native side if needed
+  }
+
+  void _handleWaypointArrived(Map<String, dynamic> data) {
+    final legIndex = data['legIndex'] as int;
+    final latitude = data['latitude'] as double?;
+    final longitude = data['longitude'] as double?;
+
+    print('📍 Flutter: Waypoint arrival - leg $legIndex at ($latitude, $longitude)');
+
+    // Find matching waypoint by leg index
+    // Note: Leg 0 = origin→waypoint1, Leg 1 = waypoint1→waypoint2, etc.
+    final intermediateWaypoints = NavigationService.waypointManager
+        .getWaypoints()
+        .where((wp) => wp.type != WaypointType.origin && wp.type != WaypointType.destination)
+        .toList();
+
+    if (legIndex >= 0 && legIndex < intermediateWaypoints.length) {
+      final waypoint = intermediateWaypoints[legIndex];
+      NavigationService.markWaypointArrival(waypoint);
+
+      // Trigger arrival UI callback
+      onWaypointArrival?.call(waypoint);
+    } else {
+      print('⚠️ Leg index $legIndex out of range (${intermediateWaypoints.length} intermediate waypoints)');
+    }
+  }
+
+  void _handleAutoDeparture(Map<String, dynamic> data) {
+    final distance = data['distance'] as double;
+    final speed = data['speed'] as double;
+
+    print('🚗 Auto-departure: ${distance.toStringAsFixed(1)}m away, ${speed.toStringAsFixed(1)}mph');
+
+    if (NavigationService.activeWaypoint != null) {
+      NavigationService.markWaypointDeparture(
+        NavigationService.activeWaypoint!,
+        isAutomatic: true,
+      );
+    }
+  }
+
+  void _handleDestinationArrived() {
+    print('🏁 Destination reached!');
+    _setState(NavigationState.completed);
   }
 
   // Simulation logic (moved from Android)

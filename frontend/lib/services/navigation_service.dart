@@ -1,9 +1,13 @@
 import 'package:flutter/services.dart';
 import 'navigation_controller.dart';
 import 'poi_api_service.dart';
+import 'waypoint_manager.dart';
+import 'waypoint_api_service.dart';
+import 'package:frontend/models/waypoint.dart';
 
 // Export everything from navigation_controller for easier imports
 export 'navigation_controller.dart';
+export 'waypoint_manager.dart';
 
 // Add route information tracking (keeping this here since it's service-level)
 class RouteInfo {
@@ -28,6 +32,7 @@ class RouteInfo {
 class NavigationService {
   static final NavigationController _controller = NavigationController();
   static final POIApiService _poiApi = POIApiService();
+  static final WaypointManager _waypointManager = WaypointManager();
 
   // Current route info
   static RouteInfo? _currentRoute;
@@ -36,6 +41,9 @@ class NavigationService {
   static String? _routePolyline;
   static POIResponse? _lastPOIResponse;
   static bool _isDiscoveringPOIs = false;
+
+  // Waypoint tracking
+  static Waypoint? _activeWaypoint;
 
   // Delegate to controller
   static NavigationState get currentState => _controller.currentState;
@@ -47,6 +55,11 @@ class NavigationService {
   static POIResponse? get lastPOIResponse => _lastPOIResponse;
   static bool get isDiscoveringPOIs => _isDiscoveringPOIs;
   static bool get hasPOIs => _lastPOIResponse != null && _lastPOIResponse!.pois.isNotEmpty;
+
+  // Waypoint getters
+  static WaypointManager get waypointManager => _waypointManager;
+  static bool get hasWaypoints => _waypointManager.hasIntermediateWaypoints();
+  static Waypoint? get activeWaypoint => _activeWaypoint;
 
   static void initialize() {
     _controller.initialize();
@@ -195,6 +208,128 @@ class NavigationService {
       counts[poi.category] = (counts[poi.category] ?? 0) + 1;
     }
     return counts;
+  }
+
+  // ========== Waypoint Tracking Methods ==========
+
+  /// Mark arrival at waypoint (records timestamp)
+  static void markWaypointArrival(Waypoint waypoint) {
+    final updatedWaypoint = waypoint.markArrival();
+    _waypointManager.updateWaypoint(updatedWaypoint);
+    _activeWaypoint = updatedWaypoint;
+
+    print('📍 Arrived at ${waypoint.name} at ${DateTime.now()}');
+  }
+
+  /// Mark departure from waypoint (records timestamp and calculates duration)
+  static Future<void> markWaypointDeparture(
+    Waypoint waypoint, {
+    bool isAutomatic = false,
+  }) async {
+    final updatedWaypoint = waypoint.markDeparture(isAutomatic: isAutomatic);
+    _waypointManager.updateWaypoint(updatedWaypoint);
+    _activeWaypoint = null;
+
+    final actualDuration = updatedWaypoint.actualDurationMinutes;
+    final method = isAutomatic ? 'automatically' : 'manually';
+    print('📍 Departed ${waypoint.name} $method after $actualDuration minutes');
+
+    // Send stop history to backend for personalization
+    await WaypointApiService.recordStopHistory(updatedWaypoint);
+  }
+
+  /// Continue navigation from current waypoint (manual departure)
+  static Future<void> continueFromWaypoint() async {
+    if (_activeWaypoint != null) {
+      await markWaypointDeparture(_activeWaypoint!, isAutomatic: false);
+    }
+  }
+
+  /// Skip current waypoint (mark as skipped, don't record stop duration)
+  static Future<void> skipCurrentWaypoint() async {
+    if (_activeWaypoint != null) {
+      final skippedWaypoint = _activeWaypoint!.copyWith(
+        status: WaypointStatus.skipped,
+      );
+      _waypointManager.updateWaypoint(skippedWaypoint);
+      _activeWaypoint = null;
+      print('⏭️ Skipped ${skippedWaypoint.name}');
+    }
+  }
+
+  /// Start navigation with waypoints
+  ///
+  /// Sets up origin, destination, and waypoints, then starts navigation.
+  static Future<String?> startNavigationWithWaypoints({
+    required double originLat,
+    required double originLng,
+    required double destLat,
+    required double destLng,
+  }) async {
+    // Set origin and destination in waypoint manager
+    _waypointManager.setOrigin(
+      latitude: originLat,
+      longitude: originLng,
+    );
+
+    _waypointManager.setDestination(
+      latitude: destLat,
+      longitude: destLng,
+    );
+
+    // Reset waypoint statuses before navigation
+    _waypointManager.resetWaypointStatuses();
+
+    // Get coordinates list (including origin, waypoints, destination)
+    final allCoordinates = _waypointManager.getCoordinatesList();
+
+    // Extract intermediate waypoints only (exclude origin and destination)
+    // Origin is first, destination is last
+    final intermediateWaypoints = allCoordinates.length > 2
+        ? allCoordinates.sublist(1, allCoordinates.length - 1)
+        : <List<double>>[];
+
+    // Get waypoint names (only for intermediate waypoints, not origin/destination)
+    final allWaypoints = _waypointManager.getWaypoints();
+    final intermediateWaypointNames = allWaypoints
+        .where((wp) => wp.type != WaypointType.origin && wp.type != WaypointType.destination)
+        .map((wp) => wp.name)
+        .toList();
+
+    print('🗺️ Starting navigation with ${allCoordinates.length} total points:');
+    print('   Origin: [$originLat, $originLng]');
+    if (intermediateWaypoints.isNotEmpty) {
+      print('   Waypoints: ${intermediateWaypoints.length}');
+      for (int i = 0; i < intermediateWaypoints.length; i++) {
+        print('     ${i + 1}. ${intermediateWaypointNames[i]} - ${intermediateWaypoints[i]}');
+      }
+    }
+    print('   Destination: [$destLat, $destLng]');
+
+    // Store route info
+    _currentRoute = RouteInfo(
+      originLat: originLat,
+      originLng: originLng,
+      destLat: destLat,
+      destLng: destLng,
+    );
+
+    // Calculate route with waypoints and names
+    final result = await _controller.calculateRoute(
+      originLat: originLat,
+      originLng: originLng,
+      destLat: destLat,
+      destLng: destLng,
+      waypoints: intermediateWaypoints,
+      waypointNames: intermediateWaypointNames,
+    );
+
+    if (result != null && _controller.currentState == NavigationState.ready) {
+      // Then start navigation
+      await _controller.startNavigation();
+    }
+
+    return result;
   }
 
   /// Dispose resources
