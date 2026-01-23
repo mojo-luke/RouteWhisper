@@ -13,11 +13,6 @@ import 'package:frontend/models/waypoint.dart';
 class WaypointManager extends ChangeNotifier {
   List<Waypoint> _waypoints = [];
 
-  /// Callback triggered when waypoints list changes
-  /// DEPRECATED: Use Provider Consumer/watch instead of callbacks
-  @Deprecated('Migrate to Provider - this will be removed after migration')
-  Function(List<Waypoint>)? onWaypointsChanged;
-
   WaypointManager();
 
   /// Get all waypoints in order
@@ -304,12 +299,6 @@ class WaypointManager extends ChangeNotifier {
 
   /// Notify listeners of waypoint changes
   void _notifyListeners() {
-    // Old callback system (backward compatibility during migration)
-    if (onWaypointsChanged != null) {
-      onWaypointsChanged!(_waypoints);
-    }
-
-    // New Provider system
     notifyListeners();  // Provider's built-in method
   }
 

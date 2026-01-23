@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:frontend/models/waypoint.dart';
-import 'edit_stop_duration_dialog.dart';
+import 'package:frontend/services/waypoint_manager.dart';
 
 /// Waypoint List Widget - Displays and manages route waypoints
 ///
@@ -10,8 +11,9 @@ import 'edit_stop_duration_dialog.dart';
 /// - Remove waypoints
 /// - Show stop duration
 /// - Show waypoint status (during navigation)
-class WaypointList extends StatefulWidget {
-  final List<Waypoint> waypoints;
+///
+/// Uses Provider to automatically rebuild when waypoints change.
+class WaypointList extends StatelessWidget {
   final bool allowEditing; // Allow reorder/remove before navigation
   final bool showStatus; // Show waypoint status during navigation
   final Function(Waypoint)? onEdit;
@@ -20,7 +22,6 @@ class WaypointList extends StatefulWidget {
 
   const WaypointList({
     Key? key,
-    required this.waypoints,
     this.allowEditing = true,
     this.showStatus = false,
     this.onEdit,
@@ -29,38 +30,37 @@ class WaypointList extends StatefulWidget {
   }) : super(key: key);
 
   @override
-  State<WaypointList> createState() => _WaypointListState();
-}
-
-class _WaypointListState extends State<WaypointList> {
-  @override
   Widget build(BuildContext context) {
-    if (widget.waypoints.isEmpty) {
+    // Get waypoints from Provider - widget automatically rebuilds when they change
+    final waypointManager = context.watch<WaypointManager>();
+    final allWaypoints = waypointManager.getWaypoints();
+
+    if (allWaypoints.isEmpty) {
       return _buildEmptyState();
     }
 
     // Get intermediate waypoints only (exclude origin/destination for display)
-    final intermediateWaypoints = widget.waypoints
+    final intermediateWaypoints = allWaypoints
         .where((wp) =>
             wp.type != WaypointType.origin && wp.type != WaypointType.destination)
         .toList();
 
-    if (intermediateWaypoints.isEmpty && widget.allowEditing) {
+    if (intermediateWaypoints.isEmpty && allowEditing) {
       return _buildEmptyState();
     }
 
-    if (widget.allowEditing && widget.onReorder != null) {
+    if (allowEditing && onReorder != null) {
       // Reorderable list for editing
       return ReorderableListView.builder(
         shrinkWrap: true,
         physics: const NeverScrollableScrollPhysics(),
         itemCount: intermediateWaypoints.length,
         onReorder: (oldIndex, newIndex) {
-          widget.onReorder?.call(oldIndex, newIndex);
+          onReorder?.call(oldIndex, newIndex);
         },
         itemBuilder: (context, index) {
           final waypoint = intermediateWaypoints[index];
-          return _buildWaypointCard(waypoint, index, key: ValueKey(waypoint.id));
+          return _buildWaypointCard(context, waypoint, index, key: ValueKey(waypoint.id));
         },
       );
     } else {
@@ -71,7 +71,7 @@ class _WaypointListState extends State<WaypointList> {
         itemCount: intermediateWaypoints.length,
         itemBuilder: (context, index) {
           final waypoint = intermediateWaypoints[index];
-          return _buildWaypointCard(waypoint, index);
+          return _buildWaypointCard(context, waypoint, index);
         },
       );
     }
@@ -110,12 +110,12 @@ class _WaypointListState extends State<WaypointList> {
     );
   }
 
-  Widget _buildWaypointCard(Waypoint waypoint, int index, {Key? key}) {
+  Widget _buildWaypointCard(BuildContext context, Waypoint waypoint, int index, {Key? key}) {
     return Card(
       key: key,
       margin: const EdgeInsets.symmetric(horizontal: 0, vertical: 4),
       child: ListTile(
-        leading: _buildLeadingIcon(waypoint, index),
+        leading: _buildLeadingIcon(context, waypoint, index),
         title: Text(
           waypoint.name,
           style: const TextStyle(fontWeight: FontWeight.w500),
@@ -125,18 +125,18 @@ class _WaypointListState extends State<WaypointList> {
           children: [
             Text(_getTypeLabel(waypoint.type)),
             const SizedBox(height: 4),
-            _buildDurationRow(waypoint),
+            _buildDurationRow(context, waypoint),
           ],
         ),
-        trailing: widget.allowEditing
-            ? _buildRemoveButton(waypoint)
-            : (widget.showStatus ? _buildStatusIcon(waypoint) : null),
+        trailing: allowEditing
+            ? _buildRemoveButton(context, waypoint)
+            : (showStatus ? _buildStatusIcon(waypoint) : null),
       ),
     );
   }
 
-  Widget _buildLeadingIcon(Waypoint waypoint, int index) {
-    if (widget.showStatus) {
+  Widget _buildLeadingIcon(BuildContext context, Waypoint waypoint, int index) {
+    if (showStatus) {
       return _buildStatusIcon(waypoint);
     }
 
@@ -153,7 +153,7 @@ class _WaypointListState extends State<WaypointList> {
     );
   }
 
-  Widget _buildDurationRow(Waypoint waypoint) {
+  Widget _buildDurationRow(BuildContext context, Waypoint waypoint) {
     return Row(
       children: [
         const Icon(Icons.access_time, size: 14, color: Colors.grey),
@@ -162,10 +162,10 @@ class _WaypointListState extends State<WaypointList> {
           '${waypoint.estimatedDurationMinutes} min stop',
           style: const TextStyle(fontSize: 12, color: Colors.grey),
         ),
-        if (widget.allowEditing && widget.onEdit != null) ...[
+        if (allowEditing && onEdit != null) ...[
           const SizedBox(width: 8),
           InkWell(
-            onTap: () => widget.onEdit?.call(waypoint),
+            onTap: () => onEdit?.call(waypoint),
             child: Text(
               'Edit',
               style: TextStyle(
@@ -180,7 +180,7 @@ class _WaypointListState extends State<WaypointList> {
     );
   }
 
-  Widget _buildRemoveButton(Waypoint waypoint) {
+  Widget _buildRemoveButton(BuildContext context, Waypoint waypoint) {
     return IconButton(
       icon: const Icon(Icons.remove_circle_outline, color: Colors.red),
       onPressed: () {
@@ -198,7 +198,7 @@ class _WaypointListState extends State<WaypointList> {
               TextButton(
                 onPressed: () {
                   Navigator.pop(context);
-                  widget.onRemove?.call(waypoint);
+                  onRemove?.call(waypoint);
                 },
                 style: TextButton.styleFrom(foregroundColor: Colors.red),
                 child: const Text('Remove'),
@@ -253,8 +253,9 @@ class _WaypointListState extends State<WaypointList> {
 }
 
 /// Waypoint List with Header - Complete widget with title and summary
+///
+/// Uses Provider to automatically rebuild when waypoints change.
 class WaypointListWithHeader extends StatelessWidget {
-  final List<Waypoint> waypoints;
   final bool allowEditing;
   final bool showStatus;
   final String? title;
@@ -265,7 +266,6 @@ class WaypointListWithHeader extends StatelessWidget {
 
   const WaypointListWithHeader({
     Key? key,
-    required this.waypoints,
     this.allowEditing = true,
     this.showStatus = false,
     this.title,
@@ -277,6 +277,10 @@ class WaypointListWithHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Get waypoints from Provider
+    final waypointManager = context.watch<WaypointManager>();
+    final waypoints = waypointManager.getWaypoints();
+
     final intermediateWaypoints = waypoints
         .where((wp) =>
             wp.type != WaypointType.origin && wp.type != WaypointType.destination)
@@ -316,7 +320,6 @@ class WaypointListWithHeader extends StatelessWidget {
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
           child: WaypointList(
-            waypoints: waypoints,
             allowEditing: allowEditing,
             showStatus: showStatus,
             onEdit: onEdit,

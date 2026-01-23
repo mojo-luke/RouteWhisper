@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../services/navigation_service.dart';
 import '../widgets/route_input_dialog.dart';
 import '../widgets/poi_dashboard.dart';
@@ -16,25 +17,16 @@ class NavigationDashboard extends StatefulWidget {
 }
 
 class _NavigationDashboardState extends State<NavigationDashboard> {
-  NavigationState _currentState = NavigationState.idle;
-  String _statusMessage = 'Ready to navigate';
+  // UI-only state (transient, not managed by Provider)
   String? _errorMessage;
-  List<Waypoint> _waypoints = [];
 
   @override
   void initState() {
     super.initState();
     NavigationService.initialize();
 
-    // Set up callbacks using the new method
+    // Only set up callbacks for transient UI state (not managed by Provider)
     NavigationService.setCallbacks(
-      onStateChanged: (state) {
-        setState(() {
-          _currentState = state;
-          _statusMessage = _getStatusMessage(state);
-          _errorMessage = null; // Clear error when state changes
-        });
-      },
       onError: (error) {
         setState(() {
           _errorMessage = error;
@@ -42,27 +34,19 @@ class _NavigationDashboardState extends State<NavigationDashboard> {
         _showErrorSnackBar(error);
       },
       onLocationUpdate: (location) {
-        // Handle location updates if needed
+        // Handle location updates for debugging
         print('🎯 Location update: ${location.lat}, ${location.lng}');
-      },
-      onRoutePolylineReceived: () {
-        // Refresh UI when route polyline is received
-        print('🎯 Route polyline received! Refreshing UI...');
-        setState(() {
-          // Just trigger a rebuild to show the POI button
-        });
       },
     );
 
-    // Listen for waypoint changes
-    NavigationService.waypointManager.onWaypointsChanged = (waypoints) {
-      setState(() {
-        _waypoints = waypoints;
-      });
-    };
+    // State changes (navigation state, waypoints) now come from Provider
+    // Widgets automatically rebuild when Provider state changes
+  }
 
-    // Get initial waypoints
-    _waypoints = NavigationService.waypointManager.getWaypoints();
+  @override
+  void dispose() {
+    // Clean up (good practice)
+    super.dispose();
   }
 
   String _getStatusMessage(NavigationState state) {
@@ -100,6 +84,14 @@ class _NavigationDashboardState extends State<NavigationDashboard> {
 
   @override
   Widget build(BuildContext context) {
+    // Get state from Provider (automatically rebuilds when state changes)
+    final navigationController = context.watch<NavigationController>();
+    final waypointManager = context.watch<WaypointManager>();
+
+    final currentState = navigationController.currentState;
+    final waypoints = waypointManager.getWaypoints();
+    final statusMessage = _getStatusMessage(currentState);
+
     return Scaffold(
       backgroundColor: const Color(0xFF1A1A1A), // Dark theme for driving
       appBar: AppBar(
@@ -117,11 +109,11 @@ class _NavigationDashboardState extends State<NavigationDashboard> {
           child: Column(
             children: [
               // Status Card
-              _buildStatusCard(),
+              _buildStatusCard(currentState, statusMessage),
               const SizedBox(height: 32),
 
               // Navigation Controls
-              Expanded(child: _buildNavigationControls()),
+              Expanded(child: _buildNavigationControls(currentState, waypoints)),
 
               // Bottom Actions
               _buildBottomActions(),
@@ -132,7 +124,7 @@ class _NavigationDashboardState extends State<NavigationDashboard> {
     );
   }
 
-  Widget _buildStatusCard() {
+  Widget _buildStatusCard(NavigationState currentState, String statusMessage) {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(24),
@@ -140,7 +132,7 @@ class _NavigationDashboardState extends State<NavigationDashboard> {
         color: const Color(0xFF2D2D2D),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: _getStateColor(_currentState).withOpacity(0.3),
+          color: _getStateColor(currentState).withOpacity(0.3),
           width: 2,
         ),
       ),
@@ -150,24 +142,24 @@ class _NavigationDashboardState extends State<NavigationDashboard> {
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: _getStateColor(_currentState).withOpacity(0.2),
+              color: _getStateColor(currentState).withOpacity(0.2),
               shape: BoxShape.circle,
             ),
             child: Icon(
-              _getStateIcon(_currentState),
+              _getStateIcon(currentState),
               size: 48,
-              color: _getStateColor(_currentState),
+              color: _getStateColor(currentState),
             ),
           ),
           const SizedBox(height: 16),
 
           // State Text
           Text(
-            _currentState.name.toUpperCase(),
+            currentState.name.toUpperCase(),
             style: TextStyle(
               fontSize: 18,
               fontWeight: FontWeight.bold,
-              color: _getStateColor(_currentState),
+              color: _getStateColor(currentState),
               letterSpacing: 1.2,
             ),
           ),
@@ -175,15 +167,15 @@ class _NavigationDashboardState extends State<NavigationDashboard> {
 
           // Status Message
           Text(
-            _statusMessage,
+            statusMessage,
             style: const TextStyle(fontSize: 16, color: Colors.white70),
             textAlign: TextAlign.center,
           ),
 
           // Show route info when navigating
           if (NavigationService.currentRoute != null &&
-              (_currentState == NavigationState.ready ||
-                  _currentState == NavigationState.navigating)) ...[
+              (currentState == NavigationState.ready ||
+                  currentState == NavigationState.navigating)) ...[
             const SizedBox(height: 16),
             Container(
               padding: const EdgeInsets.all(12),
@@ -267,12 +259,12 @@ class _NavigationDashboardState extends State<NavigationDashboard> {
     );
   }
 
-  Widget _buildNavigationControls() {
+  Widget _buildNavigationControls(NavigationState currentState, List<Waypoint> waypoints) {
     return SingleChildScrollView(
       child: Column(
         children: [
           // Primary Action Button
-          _buildPrimaryActionButton(),
+          _buildPrimaryActionButton(currentState),
           const SizedBox(height: 20),
 
           // Secondary Actions
@@ -335,7 +327,7 @@ class _NavigationDashboardState extends State<NavigationDashboard> {
               ],
             ),
             const SizedBox(height: 16),
-            _buildWaypointSection(),
+            _buildWaypointSection(waypoints),
             const SizedBox(height: 24),
             // Visual separator after waypoints
             Container(
@@ -352,8 +344,8 @@ class _NavigationDashboardState extends State<NavigationDashboard> {
     );
   }
 
-  Widget _buildWaypointSection() {
-    final intermediateWaypoints = _waypoints
+  Widget _buildWaypointSection(List<Waypoint> waypoints) {
+    final intermediateWaypoints = waypoints
         .where((wp) =>
             wp.type != WaypointType.origin && wp.type != WaypointType.destination)
         .toList();
@@ -635,7 +627,6 @@ class _NavigationDashboardState extends State<NavigationDashboard> {
         content: SizedBox(
           width: double.maxFinite,
           child: WaypointListWithHeader(
-            waypoints: _waypoints,
             allowEditing: true,
             onEdit: (waypoint) => _editStopDuration(waypoint),
             onRemove: (waypoint) {
@@ -752,10 +743,8 @@ class _NavigationDashboardState extends State<NavigationDashboard> {
 
     final route = NavigationService.currentRoute!;
 
-    setState(() {
-      _currentState = NavigationState.calculating;
-      _statusMessage = 'Recalculating route with waypoints...';
-    });
+    // No setState needed - NavigationController will notify Provider
+    // when state changes to calculating
 
     try {
       // Use startNavigationWithWaypoints which handles everything
@@ -784,12 +773,12 @@ class _NavigationDashboardState extends State<NavigationDashboard> {
     }
   }
 
-  Widget _buildPrimaryActionButton() {
+  Widget _buildPrimaryActionButton(NavigationState currentState) {
     String buttonText;
     VoidCallback? onPressed;
     Color buttonColor;
 
-    switch (_currentState) {
+    switch (currentState) {
       case NavigationState.idle:
         buttonText = 'Plan New Route';
         buttonColor = Colors.blue;

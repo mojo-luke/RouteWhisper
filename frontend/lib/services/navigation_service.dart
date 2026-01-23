@@ -66,21 +66,25 @@ class NavigationService {
     _controller.initialize();
   }
 
+  /// DEPRECATED: This method is no longer needed with Provider
+  ///
+  /// State changes (navigation state, waypoints) now come from Provider.
+  /// Widgets automatically rebuild when Provider state changes.
+  ///
+  /// This method is kept temporarily for transient UI state only (errors, logging).
+  @Deprecated('Use Provider Consumer/watch instead')
   static void setCallbacks({
-    Function(NavigationState)? onStateChanged,
-    Function(String)? onError,
-    Function(RoutePoint)? onLocationUpdate,
-    Function()? onRoutePolylineReceived,
+    Function(NavigationState)? onStateChanged,  // Deprecated - use Provider
+    Function(String)? onError,                  // Only for transient UI (snackbars)
+    Function(RoutePoint)? onLocationUpdate,     // Only for logging
+    Function()? onRoutePolylineReceived,        // Deprecated - use Provider
   }) {
-    _controller.onStateChanged = onStateChanged;
-    _controller.onError = onError;
-    _controller.onLocationUpdate = onLocationUpdate;
-    // Set route polyline callback to store polyline for POI discovery
-    _controller.onRoutePolyline = (polyline) {
-      setRoutePolyline(polyline);
-      // Notify UI that polyline was received
-      onRoutePolylineReceived?.call();
-    };
+    // Note: State changes and waypoint changes are now handled by Provider
+    // No need to set callbacks on controller
+
+    // These callbacks are only used for transient UI state that doesn't
+    // need to be in Provider (errors that show in snackbars, logging)
+    print('⚠️ setCallbacks is deprecated - use Provider instead');
   }
 
   static Future<String?> startNavigation({

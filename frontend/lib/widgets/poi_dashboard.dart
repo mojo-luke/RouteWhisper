@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../services/navigation_service.dart';
 import '../services/poi_api_service.dart';
 import '../models/waypoint.dart';
@@ -75,6 +76,47 @@ class _POIDashboardState extends State<POIDashboard> {
   }
 
   Widget _buildBody() {
+    // Watch navigation state (rebuilds when route changes)
+    final navigationController = context.watch<NavigationController>();
+    final hasRoute = navigationController.currentState != NavigationState.idle;
+
+    // No route - show message to set route first
+    if (!hasRoute) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.route,
+                size: 64,
+                color: Colors.grey.shade300,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'No Route Set',
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.grey.shade700,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Set a route first to discover POIs along your path.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Colors.grey.shade600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     // Loading state
     if (_loading) {
       return Center(
@@ -258,8 +300,59 @@ class _POIDashboardState extends State<POIDashboard> {
     );
   }
 
+  /// Recalculate route with all current waypoints
+  Future<void> _recalculateRouteWithWaypoints() async {
+    try {
+      final route = NavigationService.currentRoute;
+      if (route == null) return;
+
+      // Get all waypoints from manager
+      final allWaypoints = NavigationService.waypointManager.getWaypoints();
+
+      // Filter to only intermediate waypoints (exclude origin and destination)
+      final intermediateWaypoints = allWaypoints
+          .where((w) => w.type != WaypointType.origin && w.type != WaypointType.destination)
+          .toList();
+
+      // Convert to [lng, lat] pairs for navigation API
+      final waypointCoords = intermediateWaypoints
+          .map((w) => [w.longitude, w.latitude])
+          .toList();
+
+      // Get waypoint names
+      final waypointNames = intermediateWaypoints
+          .map((w) => w.name)
+          .toList();
+
+      print('🔄 Recalculating route with ${waypointCoords.length} waypoints');
+
+      // Recalculate route via navigation controller
+      await NavigationService.controller.calculateRoute(
+        originLat: route.originLat,
+        originLng: route.originLng,
+        destLat: route.destLat,
+        destLng: route.destLng,
+        waypoints: waypointCoords,
+        waypointNames: waypointNames,
+      );
+
+      print('✅ Route recalculated successfully');
+    } catch (e) {
+      print('❌ Failed to recalculate route: $e');
+      // Show error to user
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to update route: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
   /// Add POI as waypoint to the route
-  void _addPOIAsWaypoint(POI poi) {
+  void _addPOIAsWaypoint(POI poi) async {
     // Create waypoint from POI
     final waypoint = Waypoint.fromPOI(
       poi,
@@ -268,6 +361,11 @@ class _POIDashboardState extends State<POIDashboard> {
 
     // Add to waypoint manager
     NavigationService.waypointManager.addWaypoint(waypoint);
+
+    // Recalculate route with new waypoint if navigation is active
+    if (NavigationService.isNavigating && NavigationService.currentRoute != null) {
+      await _recalculateRouteWithWaypoints();
+    }
 
     // Close the details sheet
     Navigator.pop(context);
