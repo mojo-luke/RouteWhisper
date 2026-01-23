@@ -3,6 +3,9 @@ import 'package:provider/provider.dart';
 import 'screens/navigation_dashboard.dart';
 import 'services/navigation_service.dart';
 
+// Global navigator key for navigation from services
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
 void main() {
   runApp(const MyApp());
 }
@@ -28,6 +31,7 @@ class MyApp extends StatelessWidget {
         ),
       ],
       child: MaterialApp(
+        navigatorKey: navigatorKey,
         title: 'RouteWhisper',
         theme: ThemeData(
           colorScheme: ColorScheme.fromSeed(

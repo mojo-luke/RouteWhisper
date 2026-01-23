@@ -4,6 +4,12 @@
 
 This document outlines the complete development plan for RouteWhisper, broken down into clear, trackable steps across three main phases.
 
+**Last Updated:** January 17, 2026
+**Recent Changes:**
+- ✅ Marked Step 3 (POI Data Pipeline) as complete - Mapbox Search API integration with 15 categories, Redis caching, 248 tests
+- ✅ Added Step 4.5 (Waypoint Management) as complete - Full waypoint system with live progress tracking, 683 tests
+- 📊 Updated progress: 23.5% complete (4/17 steps) - up from 12.5%
+
 ---
 
 ## **Phase 1: Core Application (MVP)**
@@ -26,12 +32,12 @@ This document outlines the complete development plan for RouteWhisper, broken do
 - [x] Add trip progress display
 - [x] Test full navigation functionality
 
-### **Step 3: POI Data Pipeline**
-- [ ] Research and integrate POI data sources (Wikipedia, Wikidata, GeoNames)
-- [ ] Build backend API for POI queries
-- [ ] Implement route corridor extraction
-- [ ] Create POI ranking and filtering system
-- [ ] Set up data caching mechanisms
+### **Step 3: POI Data Pipeline** ✅
+- [x] Research and integrate POI data sources (Mapbox Search API with 15 categories)
+- [x] Build backend API for POI queries (POST /api/v1/route/pois)
+- [x] Implement route corridor extraction (5-mile buffer from polyline)
+- [x] Create POI ranking and filtering system (distance, category, rating)
+- [x] Set up data caching mechanisms (Redis with 1-hour TTL, 248 tests)
 
 ### **Step 4: Core Narration System**
 - [ ] Integrate Text-to-Speech functionality
@@ -39,6 +45,16 @@ This document outlines the complete development plan for RouteWhisper, broken do
 - [ ] Create fact ranking algorithm
 - [ ] Build audio queue management
 - [ ] Test narration during navigation
+
+### **Step 4.5: Waypoint Management System** ✅
+- [x] Create WaypointManager service with state management
+- [x] Implement add/remove/reorder waypoints functionality
+- [x] Build waypoint status tracking (pending, active, completed, skipped)
+- [x] Create stop duration estimation and tracking
+- [x] Implement arrival/departure detection (>50m away AND >5mph)
+- [x] Build waypoint progress calculation for live display
+- [x] Add live waypoint progress card on MapActivity (Google Maps style)
+- [x] Write comprehensive test coverage (683 unit tests passing)
 
 ### **Step 5: Hierarchical POI Strategy**
 - [ ] Implement trip distance detection
@@ -131,8 +147,14 @@ This document outlines the complete development plan for RouteWhisper, broken do
 
 ## Progress Tracking
 
-### Phase 1 Progress: 2/12 Steps Complete
-- [ ] Foundation Phase (Steps 1-5): 2/5 complete
+### Phase 1 Progress: 4/13 Steps Complete (30.8%)
+- [x] Foundation Phase (Steps 1-5): 4/6 complete
+  - ✅ Step 1: Project Setup
+  - ✅ Step 2: Basic Navigation
+  - ✅ Step 3: POI Data Pipeline
+  - ❌ Step 4: Core Narration (not started)
+  - ✅ Step 4.5: Waypoint Management
+  - ❌ Step 5: Hierarchical POI Strategy (not started)
 - [ ] Feature Phase (Steps 6-10): 0/5 complete
 - [ ] Polish Phase (Steps 11-12): 0/2 complete
 
@@ -142,7 +164,7 @@ This document outlines the complete development plan for RouteWhisper, broken do
 ### Phase 3 Progress: 0/1 Steps Complete
 - [ ] Advanced Features: 0/1 complete
 
-**Overall Progress: 2/16 Steps Complete (12.5%)**
+**Overall Progress: 4/17 Steps Complete (23.5%)**
 
 ---
 
@@ -165,7 +187,17 @@ This document outlines the complete development plan for RouteWhisper, broken do
    - ✅ Turn-by-turn UI
    - ✅ Navigation camera
    - ✅ Voice guidance
-2. **First POI Narration** (After Step 4)
-3. **MVP Complete** (After Step 12)
-4. **Car Integration Complete** (After Step 15)
-5. **Full Feature Set** (After Step 16) 
+2. ✅ **POI Discovery System** (After Step 3) - COMPLETE
+   - ✅ Backend POI search with Mapbox API
+   - ✅ Route corridor extraction
+   - ✅ POI ranking and caching
+   - ✅ Flutter POI dashboard with 15 categories
+3. ✅ **Waypoint Management** (After Step 4.5) - COMPLETE
+   - ✅ Add/remove/reorder waypoints
+   - ✅ Live progress tracking
+   - ✅ Arrival/departure detection
+   - ✅ 683 unit tests
+4. **First POI Narration** (After Step 4)
+5. **MVP Complete** (After Step 12)
+6. **Car Integration Complete** (After Step 15)
+7. **Full Feature Set** (After Step 16) 

@@ -96,6 +96,19 @@
         android:layout_alignParentBottom="true"
         android:layout_margin="16dp" />
 
+    <!-- Find Stops Button - Open POI discovery during navigation -->
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/findStopsButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_alignParentEnd="true"
+        android:layout_above="@id/tripProgressView"
+        android:layout_marginEnd="16dp"
+        android:layout_marginBottom="80dp"
+        android:contentDescription="Find stops along route"
+        android:src="@android:drawable/ic_menu_search"
+        android:backgroundTint="@android:color/holo_blue_dark" />
+
     <!-- Recenter Button - Floating action button to return to following mode -->
     <com.google.android.material.floatingactionbutton.FloatingActionButton
         android:id="@+id/recenterButton"

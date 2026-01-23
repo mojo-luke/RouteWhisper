@@ -4,6 +4,8 @@ import android.content.Intent
 import android.util.Log
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.embedding.engine.FlutterEngineCache
+import io.flutter.embedding.engine.dart.DartExecutor
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import com.mapbox.navigation.core.lifecycle.MapboxNavigationApp
@@ -12,6 +14,8 @@ class MainActivity : FlutterActivity() {
     private val methodChannelName = "routewhisper.com/navigation"
 
     companion object {
+        const val SHARED_ENGINE_ID = "routewhisper_shared_engine"
+
         // Static reference to method channel for use by other activities
         internal var methodChannelInstance: MethodChannel? = null
 
@@ -53,8 +57,15 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    // Use the shared FlutterEngine created by RouteWhisperApplication
+    override fun getCachedEngineId(): String {
+        return SHARED_ENGINE_ID
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+
+        Log.d("MainActivity", "Configuring shared Flutter engine: $SHARED_ENGINE_ID")
 
         val channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, methodChannelName)
         methodChannelInstance = channel  // Store reference for MapActivity
@@ -67,7 +78,11 @@ class MainActivity : FlutterActivity() {
                 "calculateRoute" -> handleCalculateRoute(call, result)
                 "openMapView" -> handleOpenMapView(call, result)
                 "cancelNavigation" -> handleCancelNavigation(result)
-                else -> result.notImplemented()
+                else -> {
+                    // Pass unhandled methods to NavigationController
+                    // It handles: openPOIDiscovery, routeCalculated, locationUpdate, etc.
+                    result.notImplemented()
+                }
             }
         }
     }
@@ -180,20 +195,32 @@ class MainActivity : FlutterActivity() {
         result.success("Map view opened")
     }
 
+    @OptIn(com.mapbox.navigation.base.ExperimentalPreviewMapboxNavigationAPI::class)
     internal fun handleCancelNavigation(result: MethodChannel.Result) {
-        Log.d("MainActivity", "Cancel navigation - clearing routes")
+        Log.d("MainActivity", "Cancel navigation - stopping trip session and clearing routes")
 
-        // Get MapboxNavigation instance and clear routes
+        // Stop the active navigation session completely
         try {
             if (MapboxNavigationApp.isSetup()) {
                 val mapboxNavigation = MapboxNavigationApp.current()
+
+                // Stop the active guidance session
+                mapboxNavigation?.stopTripSession()
+                Log.d("MainActivity", "Trip session stopped")
+
+                // Clear routes
                 mapboxNavigation?.setNavigationRoutes(emptyList())
                 Log.d("MainActivity", "Routes cleared successfully")
+
+                // Stop replay simulation if active
+                mapboxNavigation?.mapboxReplayer?.stop()
+                mapboxNavigation?.mapboxReplayer?.finish()
+                Log.d("MainActivity", "Replay simulation stopped")
             } else {
                 Log.d("MainActivity", "MapboxNavigationApp not setup yet")
             }
         } catch (e: Exception) {
-            Log.e("MainActivity", "Error clearing routes: ${e.message}")
+            Log.e("MainActivity", "Error cancelling navigation: ${e.message}")
         }
 
         result.success("Navigation cancelled")

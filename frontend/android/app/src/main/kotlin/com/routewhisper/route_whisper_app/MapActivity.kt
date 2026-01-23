@@ -108,6 +108,9 @@ class MapActivity : AppCompatActivity() {
     private lateinit var recenterButton: FloatingActionButton
     private var isUserControllingCamera = false
 
+    // Find Stops button for POI discovery during navigation
+    private lateinit var findStopsButton: FloatingActionButton
+
     // Waypoint arrival and departure tracking
     private var lastWaypointLocation: Point? = null
     private var isMonitoringDeparture = false
@@ -115,6 +118,9 @@ class MapActivity : AppCompatActivity() {
     private var previousLegIndex: Int = 0  // Track previous leg to detect transitions
     private val WAYPOINT_ARRIVAL_THRESHOLD_METERS = 50.0  // 50m arrival threshold
     private var waypointNames: Array<String>? = null  // Waypoint names for UI display
+
+    // Track if navigation was explicitly cancelled by user (vs just closing activity)
+    private var isNavigationCancelled = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -127,6 +133,7 @@ class MapActivity : AppCompatActivity() {
         maneuverView = findViewById(R.id.maneuverView)
         tripProgressView = findViewById(R.id.tripProgressView)
         recenterButton = findViewById<FloatingActionButton>(R.id.recenterButton)
+        findStopsButton = findViewById<FloatingActionButton>(R.id.findStopsButton)
 
         // Initialize waypoint progress views
         waypointProgressCard = findViewById(R.id.waypointProgressCard)
@@ -138,6 +145,11 @@ class MapActivity : AppCompatActivity() {
         // Set up recenter button click listener
         recenterButton.setOnClickListener {
             onRecenterButtonClick()
+        }
+
+        // Set up find stops button click listener
+        findStopsButton.setOnClickListener {
+            onFindStopsButtonClick()
         }
 
         // Check if this is view-only mode (just show map without calculating new route)
@@ -952,18 +964,56 @@ class MapActivity : AppCompatActivity() {
         recenterButton.visibility = View.GONE
     }
 
+    private fun onFindStopsButtonClick() {
+        Log.d(TAG, "Find Stops button clicked - launching POI discovery overlay")
+
+        try {
+            // Launch TransparentFlutterActivity as an overlay
+            // The shared FlutterEngine will allow it to access Flutter state
+            val intent = android.content.Intent(this, TransparentFlutterActivity::class.java).apply {
+                putExtra(TransparentFlutterActivity.EXTRA_ROUTE, "/poi-discovery")
+            }
+
+            startActivity(intent)
+            Log.d(TAG, "✅ POI discovery overlay launched")
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error launching POI overlay: ${e.message}", e)
+            Snackbar.make(
+                mapView,
+                "Could not open POI discovery",
+                Snackbar.LENGTH_SHORT
+            ).show()
+        }
+    }
+
+    /**
+     * Override back button to allow returning to dashboard while navigation continues.
+     * The activity finishes normally, but navigation keeps running in the background.
+     * User can reopen via "View Navigation" button to see live navigation again.
+     */
+    override fun onBackPressed() {
+        Log.d(TAG, "Back button pressed - finishing activity, navigation continues")
+        // Finish activity normally - navigation will continue in background
+        super.onBackPressed()
+    }
+
     override fun onDestroy() {
         super.onDestroy()
 
-        // Stop location simulation
-        stopSimulation()
+        Log.d(TAG, "MapActivity destroyed - navigation continues in background")
 
-        // Clean up voice components
-        speechApi.cancel()
-        voiceInstructionsPlayer.shutdown()
-
-        // Detach from lifecycle - this will automatically handle cleanup
-        // No need to manually stop trip session as MapboxNavigationApp manages it
-        MapboxNavigationApp.detach(this)
+        // Don't stop anything here - navigation should continue running in background
+        // even when this activity is destroyed. This allows users to:
+        // 1. Press back button to access dashboard and find POIs
+        // 2. Reopen navigation view by tapping "View Navigation"
+        // 3. Navigation (GPS tracking, voice guidance) continues the whole time
+        //
+        // Navigation will only stop when:
+        // - User explicitly cancels from dashboard (handleCancelNavigation in MainActivity)
+        // - App process is killed by system
+        // - User completes the trip
+        //
+        // Note: MapboxNavigationApp is attached to the Application lifecycle (not Activity),
+        // so navigation persists across activity destruction.
     }
 }

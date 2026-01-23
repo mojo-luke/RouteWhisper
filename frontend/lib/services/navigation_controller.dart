@@ -1,8 +1,11 @@
 import 'dart:async';
 import 'dart:math';
 import 'package:flutter/foundation.dart';  // For ChangeNotifier
+import 'package:flutter/material.dart';  // For showModalBottomSheet, Colors, etc.
 import 'package:flutter/services.dart';
 import '../models/waypoint.dart';
+import '../widgets/poi_dashboard.dart';
+import '../main.dart';  // For navigatorKey
 import 'navigation_service.dart';
 
 enum NavigationState {
@@ -41,18 +44,6 @@ class NavigationController extends ChangeNotifier {
   static const Duration _simulationInterval = Duration(milliseconds: 1500);
   static const int _pointSkipCount = 3;
 
-  // Callbacks (DEPRECATED - migrate to Provider)
-  @Deprecated('Use Provider Consumer/watch instead')
-  Function(NavigationState)? onStateChanged;
-  @Deprecated('Use Provider Consumer/watch instead')
-  Function(String)? onError;
-  @Deprecated('Use Provider Consumer/watch instead')
-  Function(RoutePoint)? onLocationUpdate;
-  @Deprecated('Use Provider Consumer/watch instead')
-  Function(String)? onRoutePolyline;
-  @Deprecated('Use Provider Consumer/watch instead')
-  Function(Waypoint)? onWaypointArrival;
-
   NavigationState get currentState => _currentState;
   bool get isNavigating => _currentState == NavigationState.navigating;
   bool get isSimulating => _simulationTimer?.isActive ?? false;
@@ -85,14 +76,15 @@ class NavigationController extends ChangeNotifier {
       case 'navigationError':
         final data = Map<String, dynamic>.from(call.arguments as Map);
         final error = data['error'] as String;
-        onError?.call(error);
         notifyListeners();  // Notify Provider of error
         break;
       case 'setRoutePolyline':
         final data = Map<String, dynamic>.from(call.arguments as Map);
         final polyline = data['polyline'] as String;
         print('📍 Received route polyline from Android: ${polyline.substring(0, polyline.length > 50 ? 50 : polyline.length)}...');
-        onRoutePolyline?.call(polyline);
+        // Store the polyline in NavigationService for POI discovery
+        NavigationService.setRoutePolyline(polyline);
+        print('✅ Route polyline stored in NavigationService for POI discovery');
         notifyListeners();  // Notify Provider of route polyline
         break;
       case 'waypointArrived':
@@ -109,6 +101,14 @@ class NavigationController extends ChangeNotifier {
       case 'calculateWaypointProgress':
         final data = Map<String, dynamic>.from(call.arguments as Map);
         return _handleCalculateWaypointProgress(data);
+      case 'showOverlay':
+        final data = Map<String, dynamic>.from(call.arguments as Map);
+        _handleShowOverlay(data);
+        break;
+      // Legacy support for direct openPOIDiscovery calls (can be removed later)
+      case 'openPOIDiscovery':
+        _handleShowOverlay({'route': '/poi-discovery'});
+        break;
     }
     return null;
   }
@@ -155,14 +155,12 @@ class NavigationController extends ChangeNotifier {
     } catch (e) {
       print('❌ Route calculation failed: $e');
       _setState(NavigationState.idle);
-      onError?.call('Route calculation failed: $e');
       return null;
     }
   }
 
   Future<void> startNavigation() async {
     if (_currentState != NavigationState.ready) {
-      onError?.call('Cannot start navigation from state: $_currentState');
       notifyListeners();  // Notify Provider of error
       return;
     }
@@ -210,10 +208,7 @@ class NavigationController extends ChangeNotifier {
       print('🎯 State change: $_currentState -> $newState');
       _currentState = newState;
 
-      // Old callback (backward compatibility)
-      onStateChanged?.call(newState);
-
-      // New Provider notification
+      // Provider notification
       notifyListeners();
     }
   }
@@ -236,7 +231,6 @@ class NavigationController extends ChangeNotifier {
       print('❌ Failed to parse route data: $e');
       print('❌ Stack trace: $stackTrace');
       _setState(NavigationState.idle);
-      onError?.call('Failed to parse route data: $e');
     }
   }
 
@@ -262,8 +256,7 @@ class NavigationController extends ChangeNotifier {
       final waypoint = intermediateWaypoints[legIndex];
       NavigationService.markWaypointArrival(waypoint);
 
-      // Trigger arrival UI callback
-      onWaypointArrival?.call(waypoint);
+      // Waypoint arrival handled (Provider notifies UI automatically)
     } else {
       print('⚠️ Leg index $legIndex out of range (${intermediateWaypoints.length} intermediate waypoints)');
     }
@@ -313,10 +306,80 @@ class NavigationController extends ChangeNotifier {
     return progressData;
   }
 
+  /// Handle request to open POI discovery from MapActivity
+  /// Generic handler for showing Flutter overlays on top of native navigation.
+  /// This allows us to modify the UI entirely in Flutter without touching Android code.
+  ///
+  /// Supported routes:
+  ///   - '/poi-discovery': Shows POI discovery dashboard
+  ///   - (add more routes here as needed)
+  void _handleShowOverlay(Map<String, dynamic> data) {
+    final route = data['route'] as String? ?? '/poi-discovery';
+    final routeData = data['data'] as String?;
+
+    print('🔍 Opening Flutter overlay: $route');
+    if (routeData != null) {
+      print('📦 With data: $routeData');
+    }
+
+    try {
+      final navigatorContext = navigatorKey.currentContext;
+      if (navigatorContext == null) {
+        print('❌ Cannot open overlay - no navigator context');
+        return;
+      }
+
+      print('✅ Navigator context found, opening overlay modal...');
+
+      // Determine which widget to show based on route
+      Widget overlayWidget;
+      switch (route) {
+        case '/poi-discovery':
+          overlayWidget = const POIDashboard();
+          break;
+        // Add more routes here in the future:
+        // case '/waypoint-manager':
+        //   overlayWidget = const WaypointManagerScreen();
+        //   break;
+        default:
+          print('⚠️ Unknown overlay route: $route, defaulting to POI discovery');
+          overlayWidget = const POIDashboard();
+      }
+
+      // Show as modal bottom sheet with semi-transparent background
+      showModalBottomSheet(
+        context: navigatorContext,
+        isScrollControlled: true,
+        useSafeArea: true,
+        backgroundColor: Colors.transparent,
+        builder: (context) => DraggableScrollableSheet(
+          initialChildSize: 0.9,
+          minChildSize: 0.5,
+          maxChildSize: 0.95,
+          builder: (context, scrollController) => Container(
+            decoration: const BoxDecoration(
+              color: Color(0xFF1E1E1E),
+              borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+            ),
+            child: overlayWidget,
+          ),
+        ),
+      ).then((_) {
+        print('✅ Overlay modal closed');
+      }).catchError((error) {
+        print('❌ Error showing overlay modal: $error');
+      });
+
+      print('✅ Overlay modal initiated');
+    } catch (e, stackTrace) {
+      print('❌ Exception in _handleShowOverlay: $e');
+      print('❌ Stack trace: $stackTrace');
+    }
+  }
+
   // Simulation logic (moved from Android)
   void _startSimulation() {
     if (_routePoints.isEmpty) {
-      onError?.call('No route points for simulation');
       notifyListeners();  // Notify Provider of error
       return;
     }
@@ -375,9 +438,8 @@ class NavigationController extends ChangeNotifier {
       '🎯 Simulation step $_currentSimulationIndex: ${updatedPoint.lat}, ${updatedPoint.lng}',
     );
 
-    // Send to native side and callbacks
+    // Send to native side
     _sendLocationUpdate(updatedPoint);
-    onLocationUpdate?.call(updatedPoint);
 
     // Advance to next point
     _currentSimulationIndex += _pointSkipCount;
