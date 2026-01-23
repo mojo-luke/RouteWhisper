@@ -1,6 +1,32 @@
 version: '3.8'
 
 services:
+  # Backend API Service
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: routewhisper-backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=routewhisper
+      - POSTGRES_PASSWORD=routewhisper_dev
+      - POSTGRES_DB=routewhisper
+      - MONGODB_URL=mongodb://routewhisper:routewhisper_dev@mongodb:27017
+    depends_on:
+      - redis
+      - postgres
+      - mongodb
+    volumes:
+      - ./app:/app/app  # Mount for hot reload during development
+    restart: unless-stopped
+
   redis:
     image: redis:7-alpine
     container_name: routewhisper-redis
