@@ -10,8 +10,9 @@ import io.flutter.embedding.engine.dart.DartExecutor
 
 /**
  * Application class that initializes Mapbox and creates a shared FlutterEngine.
- * The shared engine allows MainActivity and TransparentFlutterActivity to share
- * the same Flutter state and avoid engine conflicts.
+ * The shared engine is used by MainActivity (Flutter host) and the FlutterView
+ * embedded in MapActivity for in-nav overlays — both share the same Dart isolate
+ * so Provider state is preserved across the activity boundary.
  */
 class RouteWhisperApplication : Application() {
 
@@ -42,7 +43,7 @@ class RouteWhisperApplication : Application() {
             DartExecutor.DartEntrypoint.createDefault()
         )
 
-        // Cache the engine so MainActivity and TransparentFlutterActivity can use it
+        // Cache the engine so MainActivity and MapActivity's FlutterView can use it
         FlutterEngineCache
             .getInstance()
             .put(MainActivity.SHARED_ENGINE_ID, flutterEngine)

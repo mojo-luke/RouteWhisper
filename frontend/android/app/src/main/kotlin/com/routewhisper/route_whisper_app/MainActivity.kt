@@ -74,64 +74,13 @@ class MainActivity : FlutterActivity() {
             Log.d("MainActivity", "Received method call: ${call.method}")
 
             when (call.method) {
-                "startNavigation" -> handleStartNavigation(call, result)
                 "calculateRoute" -> handleCalculateRoute(call, result)
+                "updateNavigationRoute" -> handleUpdateNavigationRoute(call, result)
                 "openMapView" -> handleOpenMapView(call, result)
                 "cancelNavigation" -> handleCancelNavigation(result)
-                else -> {
-                    // Pass unhandled methods to NavigationController
-                    // It handles: openPOIDiscovery, routeCalculated, locationUpdate, etc.
-                    result.notImplemented()
-                }
+                else -> result.notImplemented()
             }
         }
-    }
-
-    internal fun handleStartNavigation(call: MethodCall, result: MethodChannel.Result) {
-        val originLat = call.argument<Double>("originLat")
-        val originLng = call.argument<Double>("originLng")
-        val destLat = call.argument<Double>("destLat")
-        val destLng = call.argument<Double>("destLng")
-        val waypoints = call.argument<List<List<Double>>>("waypoints") // [[lng, lat], [lng, lat], ...]
-        val waypointNames = call.argument<List<String>>("waypointNames") // ["Name 1", "Name 2", ...]
-
-        if (originLat == null || originLng == null || destLat == null || destLng == null) {
-            result.error("INVALID_ARGS", "Missing coordinates", null)
-            return
-        }
-
-        if (waypoints != null && waypoints.isNotEmpty()) {
-            Log.d("MainActivity", "Starting navigation with ${waypoints.size} waypoints: ($originLat, $originLng) -> ($destLat, $destLng)")
-            if (waypointNames != null && waypointNames.isNotEmpty()) {
-                Log.d("MainActivity", "Waypoint names: $waypointNames")
-            }
-        } else {
-            Log.d("MainActivity", "Starting navigation: ($originLat, $originLng) -> ($destLat, $destLng)")
-        }
-
-        // Launch MapActivity with coordinates and waypoints
-        val intent = Intent(this, MapActivity::class.java).apply {
-            putExtra("originLat", originLat)
-            putExtra("originLng", originLng)
-            putExtra("destLat", destLat)
-            putExtra("destLng", destLng)
-
-            // Pass waypoints as flat array: [lng1, lat1, lng2, lat2, ...]
-            if (waypoints != null && waypoints.isNotEmpty()) {
-                val flatWaypoints = waypoints.flatten().toDoubleArray()
-                putExtra("waypoints", flatWaypoints)
-                Log.d("MainActivity", "Passing ${waypoints.size} waypoints to MapActivity")
-
-                // Pass waypoint names as String array
-                if (waypointNames != null && waypointNames.isNotEmpty()) {
-                    putExtra("waypointNames", waypointNames.toTypedArray())
-                    Log.d("MainActivity", "Passing ${waypointNames.size} waypoint names to MapActivity")
-                }
-            }
-        }
-        startActivity(intent)
-
-        result.success("Navigation started")
     }
 
     internal fun handleCalculateRoute(call: MethodCall, result: MethodChannel.Result) {
@@ -179,6 +128,67 @@ class MainActivity : FlutterActivity() {
         startActivity(intent)
 
         result.success("Route calculation started")
+    }
+
+    /**
+     * Update navigation route in existing MapActivity (in-place update)
+     *
+     * This method updates the route without launching a new activity, which is critical
+     * for the "Never Leave Navigation" UX principle. Called when user adds POI during
+     * active navigation.
+     *
+     * Unlike handleCalculateRoute which launches a NEW MapActivity, this method sends
+     * the update to the EXISTING MapActivity instance via updateNavigationRoute().
+     */
+    internal fun handleUpdateNavigationRoute(call: MethodCall, result: MethodChannel.Result) {
+        val originLat = call.argument<Double>("originLat")
+        val originLng = call.argument<Double>("originLng")
+        val destLat = call.argument<Double>("destLat")
+        val destLng = call.argument<Double>("destLng")
+        val waypoints = call.argument<List<List<Double>>>("waypoints") // [[lng, lat], [lng, lat], ...]
+        val waypointNames = call.argument<List<String>>("waypointNames") // ["Name 1", "Name 2", ...]
+
+        if (originLat == null || originLng == null || destLat == null || destLng == null) {
+            result.error("INVALID_ARGS", "Missing coordinates", null)
+            return
+        }
+
+        Log.d("MainActivity", "🔄 Update navigation route in-place with ${waypoints?.size ?: 0} waypoints")
+
+        // Check if MapActivity is currently active
+        val mapActivity = MapActivity.currentInstance
+        if (mapActivity == null) {
+            Log.e("MainActivity", "❌ No active MapActivity instance - cannot update route in-place")
+            result.error("NO_ACTIVITY", "MapActivity not active", null)
+            return
+        }
+
+        // Convert waypoints to Points
+        val waypointPoints = if (waypoints != null && waypoints.isNotEmpty()) {
+            waypoints.mapNotNull { coords ->
+                if (coords.size >= 2) {
+                    com.mapbox.geojson.Point.fromLngLat(coords[0], coords[1])
+                } else {
+                    null
+                }
+            }
+        } else {
+            emptyList()
+        }
+
+        Log.d("MainActivity", "Updating route with ${waypointPoints.size} waypoint points")
+
+        // Update route in existing MapActivity (in-place)
+        mapActivity.updateNavigationRoute(
+            originLat = originLat,
+            originLng = originLng,
+            destLat = destLat,
+            destLng = destLng,
+            waypoints = waypointPoints,
+            waypointNames = waypointNames
+        )
+
+        result.success("Route updated in-place")
     }
 
     private fun handleOpenMapView(call: MethodCall, result: MethodChannel.Result) {

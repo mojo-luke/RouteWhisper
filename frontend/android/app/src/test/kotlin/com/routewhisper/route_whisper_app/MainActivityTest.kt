@@ -2,6 +2,7 @@ package com.routewhisper.route_whisper_app
 
 import android.content.Intent
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.embedding.engine.FlutterEngineCache
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.mockk.*
@@ -20,30 +21,32 @@ class MainActivityTest {
 
     private lateinit var activity: MainActivity
     private lateinit var mockFlutterEngine: FlutterEngine
-    private lateinit var methodChannelHandler: MethodChannel.MethodCallHandler
 
     @Before
     fun setup() {
-        // Create activity
+        // MainActivity uses a cached shared FlutterEngine (created by
+        // RouteWhisperApplication in production). In test, populate the cache
+        // with a mock so Robolectric can construct the activity without
+        // failing in FlutterActivityAndFragmentDelegate.setUpFlutterEngine.
+        mockFlutterEngine = mockk(relaxed = true)
+        every {
+            mockFlutterEngine.dartExecutor.binaryMessenger
+        } returns mockk(relaxed = true)
+        FlutterEngineCache.getInstance().put(
+            MainActivity.SHARED_ENGINE_ID,
+            mockFlutterEngine,
+        )
+
         activity = Robolectric.buildActivity(MainActivity::class.java)
             .create()
             .get()
 
-        // Mock FlutterEngine
-        mockFlutterEngine = mockk(relaxed = true)
-
-        // Capture the method call handler
-        val methodChannelSlot = slot<MethodChannel.MethodCallHandler>()
-        every {
-            mockFlutterEngine.dartExecutor.binaryMessenger
-        } returns mockk(relaxed = true)
-
-        // Configure the engine which will set up the method channel
         activity.configureFlutterEngine(mockFlutterEngine)
     }
 
     @After
     fun tearDown() {
+        FlutterEngineCache.getInstance().remove(MainActivity.SHARED_ENGINE_ID)
         unmockkAll()
     }
 
@@ -57,10 +60,10 @@ class MainActivityTest {
             "destLat" to 34.0522,
             "destLng" to -118.2437
         )
-        val call = MethodCall("startNavigation", arguments)
+        val call = MethodCall("calculateRoute", arguments)
 
         // Act
-        activity.handleStartNavigation(call, result)
+        activity.handleCalculateRoute(call, result)
 
         // Assert - verify Intent was created with correct extras
         val shadowActivity = shadowOf(activity)
@@ -84,7 +87,7 @@ class MainActivityTest {
         }
 
         // Verify success was called
-        verify { result.success("Navigation started") }
+        verify { result.success("Route calculation started") }
     }
 
     @Test
@@ -96,10 +99,10 @@ class MainActivityTest {
             "destLat" to 34.0522,
             "destLng" to -118.2437
         )
-        val call = MethodCall("startNavigation", arguments)
+        val call = MethodCall("calculateRoute", arguments)
 
         // Act
-        activity.handleStartNavigation(call, result)
+        activity.handleCalculateRoute(call, result)
 
         // Assert
         verify { result.error("INVALID_ARGS", "Missing coordinates", null) }
@@ -119,10 +122,10 @@ class MainActivityTest {
             "destLat" to 34.0522,
             "destLng" to -118.2437
         )
-        val call = MethodCall("startNavigation", arguments)
+        val call = MethodCall("calculateRoute", arguments)
 
         // Act
-        activity.handleStartNavigation(call, result)
+        activity.handleCalculateRoute(call, result)
 
         // Assert
         verify { result.error("INVALID_ARGS", "Missing coordinates", null) }
@@ -137,10 +140,10 @@ class MainActivityTest {
             "originLng" to -122.4194,
             "destLng" to -118.2437
         )
-        val call = MethodCall("startNavigation", arguments)
+        val call = MethodCall("calculateRoute", arguments)
 
         // Act
-        activity.handleStartNavigation(call, result)
+        activity.handleCalculateRoute(call, result)
 
         // Assert
         verify { result.error("INVALID_ARGS", "Missing coordinates", null) }
@@ -155,10 +158,10 @@ class MainActivityTest {
             "originLng" to -122.4194,
             "destLat" to 34.0522
         )
-        val call = MethodCall("startNavigation", arguments)
+        val call = MethodCall("calculateRoute", arguments)
 
         // Act
-        activity.handleStartNavigation(call, result)
+        activity.handleCalculateRoute(call, result)
 
         // Assert
         verify { result.error("INVALID_ARGS", "Missing coordinates", null) }
@@ -169,10 +172,10 @@ class MainActivityTest {
         // Arrange
         val result = mockk<MethodChannel.Result>(relaxed = true)
         val arguments = emptyMap<String, Any>()
-        val call = MethodCall("startNavigation", arguments)
+        val call = MethodCall("calculateRoute", arguments)
 
         // Act
-        activity.handleStartNavigation(call, result)
+        activity.handleCalculateRoute(call, result)
 
         // Assert
         verify { result.error("INVALID_ARGS", "Missing coordinates", null) }
@@ -213,10 +216,10 @@ class MainActivityTest {
             ),
             "waypointNames" to listOf("Stop 1", "Stop 2")
         )
-        val call = MethodCall("startNavigation", arguments)
+        val call = MethodCall("calculateRoute", arguments)
 
         // Act
-        activity.handleStartNavigation(call, result)
+        activity.handleCalculateRoute(call, result)
 
         // Assert - verify Intent contains waypoint names
         val shadowActivity = shadowOf(activity)
@@ -230,7 +233,7 @@ class MainActivityTest {
         assert(waypointNames[0] == "Stop 1") { "First waypoint name should match" }
         assert(waypointNames[1] == "Stop 2") { "Second waypoint name should match" }
 
-        verify { result.success("Navigation started") }
+        verify { result.success("Route calculation started") }
     }
 
     @Test
@@ -247,10 +250,10 @@ class MainActivityTest {
             )
             // No waypointNames provided
         )
-        val call = MethodCall("startNavigation", arguments)
+        val call = MethodCall("calculateRoute", arguments)
 
         // Act
-        activity.handleStartNavigation(call, result)
+        activity.handleCalculateRoute(call, result)
 
         // Assert - should still work without names
         val shadowActivity = shadowOf(activity)
@@ -266,7 +269,7 @@ class MainActivityTest {
         val waypointNames = startedIntent.getStringArrayExtra("waypointNames")
         // It's okay if waypointNames is null when not provided
 
-        verify { result.success("Navigation started") }
+        verify { result.success("Route calculation started") }
     }
 
     @Test

@@ -1,4 +1,3 @@
-import 'package:flutter/services.dart';
 import 'navigation_controller.dart';
 import 'poi_api_service.dart';
 import 'waypoint_manager.dart';
@@ -37,6 +36,26 @@ class NavigationService {
   // Current route info
   static RouteInfo? _currentRoute;
 
+  /// Update route info (called from onNavigationStarted callback)
+  static void updateRouteInfo({
+    required double originLat,
+    required double originLng,
+    required double destLat,
+    required double destLng,
+    String originName = "Current Location",
+    String destName = "Destination",
+  }) {
+    _currentRoute = RouteInfo(
+      originLat: originLat,
+      originLng: originLng,
+      destLat: destLat,
+      destLng: destLng,
+      originName: originName,
+      destName: destName,
+    );
+    print('📍 Route info updated: ($originLat, $originLng) -> ($destLat, $destLng)');
+  }
+
   // POI discovery state
   static String? _routePolyline;
   static POIResponse? _lastPOIResponse;
@@ -66,34 +85,12 @@ class NavigationService {
     _controller.initialize();
   }
 
-  /// DEPRECATED: This method is no longer needed with Provider
-  ///
-  /// State changes (navigation state, waypoints) now come from Provider.
-  /// Widgets automatically rebuild when Provider state changes.
-  ///
-  /// This method is kept temporarily for transient UI state only (errors, logging).
-  @Deprecated('Use Provider Consumer/watch instead')
-  static void setCallbacks({
-    Function(NavigationState)? onStateChanged,  // Deprecated - use Provider
-    Function(String)? onError,                  // Only for transient UI (snackbars)
-    Function(RoutePoint)? onLocationUpdate,     // Only for logging
-    Function()? onRoutePolylineReceived,        // Deprecated - use Provider
-  }) {
-    // Note: State changes and waypoint changes are now handled by Provider
-    // No need to set callbacks on controller
-
-    // These callbacks are only used for transient UI state that doesn't
-    // need to be in Provider (errors that show in snackbars, logging)
-    print('⚠️ setCallbacks is deprecated - use Provider instead');
-  }
-
   static Future<String?> startNavigation({
     required double originLat,
     required double originLng,
     required double destLat,
     required double destLng,
   }) async {
-    // Store route info
     _currentRoute = RouteInfo(
       originLat: originLat,
       originLng: originLng,
@@ -103,20 +100,12 @@ class NavigationService {
       destName: "Los Angeles, CA",
     );
 
-    // First calculate route
-    final result = await _controller.calculateRoute(
+    return _controller.calculateRoute(
       originLat: originLat,
       originLng: originLng,
       destLat: destLat,
       destLng: destLng,
     );
-
-    if (result != null && _controller.currentState == NavigationState.ready) {
-      // Then start navigation
-      await _controller.startNavigation();
-    }
-
-    return result;
   }
 
   static Future<void> cancelNavigation() async {
@@ -133,12 +122,6 @@ class NavigationService {
     NavigationState.ready,
     NavigationState.navigating,
   ].contains(_controller.currentState);
-
-  // Enable/disable simulation mode (if needed)
-  static void setSimulationMode(bool enabled) {
-    print('📱 Simulation mode: ${enabled ? "ENABLED" : "DISABLED"}');
-    // This could be passed to the controller if needed
-  }
 
   // ========== POI Discovery Methods ==========
 
@@ -194,7 +177,7 @@ class NavigationService {
       return response;
     } catch (e) {
       print('❌ POI discovery failed: $e');
-      return null;
+      rethrow;  // Let the caller show the real error
     } finally {
       _isDiscoveringPOIs = false;
     }
@@ -319,8 +302,7 @@ class NavigationService {
       destLng: destLng,
     );
 
-    // Calculate route with waypoints and names
-    final result = await _controller.calculateRoute(
+    return _controller.calculateRoute(
       originLat: originLat,
       originLng: originLng,
       destLat: destLat,
@@ -328,13 +310,6 @@ class NavigationService {
       waypoints: intermediateWaypoints,
       waypointNames: intermediateWaypointNames,
     );
-
-    if (result != null && _controller.currentState == NavigationState.ready) {
-      // Then start navigation
-      await _controller.startNavigation();
-    }
-
-    return result;
   }
 
   /// Dispose resources

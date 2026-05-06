@@ -24,23 +24,8 @@ class _NavigationDashboardState extends State<NavigationDashboard> {
   void initState() {
     super.initState();
     NavigationService.initialize();
-
-    // Only set up callbacks for transient UI state (not managed by Provider)
-    NavigationService.setCallbacks(
-      onError: (error) {
-        setState(() {
-          _errorMessage = error;
-        });
-        _showErrorSnackBar(error);
-      },
-      onLocationUpdate: (location) {
-        // Handle location updates for debugging
-        print('🎯 Location update: ${location.lat}, ${location.lng}');
-      },
-    );
-
-    // State changes (navigation state, waypoints) now come from Provider
-    // Widgets automatically rebuild when Provider state changes
+    // Navigation state, waypoints, and route polyline come from Provider — widgets
+    // rebuild automatically when state changes.
   }
 
   @override
