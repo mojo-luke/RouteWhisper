@@ -38,6 +38,8 @@ def decode_polyline(polyline: str, precision: int = 6) -> List[Tuple[float, floa
         result = 0
         shift = 0
         while True:
+            if index >= len(polyline):
+                return coordinates  # truncated polyline — return what we have
             byte = ord(polyline[index]) - 63
             index += 1
             result |= (byte & 0x1F) << shift
@@ -52,6 +54,8 @@ def decode_polyline(polyline: str, precision: int = 6) -> List[Tuple[float, floa
         result = 0
         shift = 0
         while True:
+            if index >= len(polyline):
+                return coordinates  # truncated polyline — return what we have
             byte = ord(polyline[index]) - 63
             index += 1
             result |= (byte & 0x1F) << shift

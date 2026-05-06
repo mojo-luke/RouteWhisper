@@ -29,6 +29,23 @@ class _POIDashboardState extends State<POIDashboard> {
   }
 
   Future<void> _loadPOIs() async {
+    // Check preconditions before showing loading state
+    if (NavigationService.routePolyline == null) {
+      setState(() {
+        _error = 'No route available. Start navigation first.';
+        _loading = false;
+      });
+      return;
+    }
+
+    if (NavigationService.isDiscoveringPOIs) {
+      setState(() {
+        _error = 'Search already in progress. Please wait a moment, then refresh.';
+        _loading = false;
+      });
+      return;
+    }
+
     setState(() {
       _loading = true;
       _error = null;
@@ -37,6 +54,7 @@ class _POIDashboardState extends State<POIDashboard> {
     try {
       final response = await NavigationService.discoverPOIs();
 
+      if (!mounted) return;
       if (response != null) {
         setState(() {
           _pois = response.pois;
@@ -45,13 +63,14 @@ class _POIDashboardState extends State<POIDashboard> {
         });
       } else {
         setState(() {
-          _error = 'No route polyline available. Please start navigation first.';
+          _error = 'Search already in progress. Please wait a moment, then refresh.';
           _loading = false;
         });
       }
     } catch (e) {
+      if (!mounted) return;
       setState(() {
-        _error = 'Failed to discover POIs: $e';
+        _error = 'Failed to find POIs: $e';
         _loading = false;
       });
     }
@@ -76,47 +95,6 @@ class _POIDashboardState extends State<POIDashboard> {
   }
 
   Widget _buildBody() {
-    // Watch navigation state (rebuilds when route changes)
-    final navigationController = context.watch<NavigationController>();
-    final hasRoute = navigationController.currentState != NavigationState.idle;
-
-    // No route - show message to set route first
-    if (!hasRoute) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                Icons.route,
-                size: 64,
-                color: Colors.grey.shade300,
-              ),
-              const SizedBox(height: 16),
-              Text(
-                'No Route Set',
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.grey.shade700,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Set a route first to discover POIs along your path.',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 14,
-                  color: Colors.grey.shade600,
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
     // Loading state
     if (_loading) {
       return Center(
@@ -289,9 +267,8 @@ class _POIDashboardState extends State<POIDashboard> {
               final poi = _pois[index];
               return POISuggestionCard(
                 poi: poi,
-                onTap: () {
-                  _showPOIDetails(poi);
-                },
+                onTap: () => _showPOIDetails(poi),
+                onAddWaypoint: () => _addPOIAsWaypoint(poi),
               );
             },
           ),
@@ -301,6 +278,9 @@ class _POIDashboardState extends State<POIDashboard> {
   }
 
   /// Recalculate route with all current waypoints
+  ///
+  /// Uses updateNavigationRoute() to update in-place during active navigation,
+  /// ensuring user never leaves MapActivity (UX Principle: "Never Leave Navigation")
   Future<void> _recalculateRouteWithWaypoints() async {
     try {
       final route = NavigationService.currentRoute;
@@ -325,16 +305,34 @@ class _POIDashboardState extends State<POIDashboard> {
           .toList();
 
       print('🔄 Recalculating route with ${waypointCoords.length} waypoints');
+      print('🔍 DEBUG: NavigationService.isNavigating = ${NavigationService.isNavigating}');
+      print('🔍 DEBUG: NavigationService.currentState = ${NavigationService.currentState}');
 
-      // Recalculate route via navigation controller
-      await NavigationService.controller.calculateRoute(
-        originLat: route.originLat,
-        originLng: route.originLng,
-        destLat: route.destLat,
-        destLng: route.destLng,
-        waypoints: waypointCoords,
-        waypointNames: waypointNames,
-      );
+      // CRITICAL: Use updateNavigationRoute() during active navigation
+      // This updates the route IN-PLACE in MapActivity without launching a new activity
+      // UX: User stays in navigation, route updates seamlessly
+      if (NavigationService.isNavigating) {
+        print('📍 Navigation active - updating route in-place');
+        await NavigationService.controller.updateNavigationRoute(
+          originLat: route.originLat,
+          originLng: route.originLng,
+          destLat: route.destLat,
+          destLng: route.destLng,
+          waypoints: waypointCoords,
+          waypointNames: waypointNames,
+        );
+      } else {
+        // Not navigating yet - use regular calculateRoute
+        print('📍 Not navigating - using regular route calculation');
+        await NavigationService.controller.calculateRoute(
+          originLat: route.originLat,
+          originLng: route.originLng,
+          destLat: route.destLat,
+          destLng: route.destLng,
+          waypoints: waypointCoords,
+          waypointNames: waypointNames,
+        );
+      }
 
       print('✅ Route recalculated successfully');
     } catch (e) {

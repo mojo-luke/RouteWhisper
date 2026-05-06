@@ -8,11 +8,13 @@ import '../services/poi_api_service.dart';
 class POISuggestionCard extends StatelessWidget {
   final POI poi;
   final VoidCallback? onTap;
+  final VoidCallback? onAddWaypoint;
 
   const POISuggestionCard({
     Key? key,
     required this.poi,
     this.onTap,
+    this.onAddWaypoint,
   }) : super(key: key);
 
   @override
@@ -161,11 +163,11 @@ class POISuggestionCard extends StatelessWidget {
                 ),
               ],
               const SizedBox(height: 12),
-              // Action Button (disabled for MVP)
+              // Action Button
               SizedBox(
                 width: double.infinity,
                 child: OutlinedButton.icon(
-                  onPressed: null, // TODO: Enable when waypoint management is ready
+                  onPressed: onAddWaypoint ?? onTap,
                   icon: const Icon(Icons.add_location_alt, size: 18),
                   label: const Text('Add as Waypoint'),
                   style: OutlinedButton.styleFrom(

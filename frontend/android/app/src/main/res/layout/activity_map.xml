@@ -122,4 +122,12 @@
         android:src="@android:drawable/ic_menu_mylocation"
         android:visibility="gone" />
 
+    <!-- Flutter overlay container for POI discovery -->
+    <FrameLayout
+        android:id="@+id/flutterContainer"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="gone"
+        android:background="#80000000" />
+
 </RelativeLayout>

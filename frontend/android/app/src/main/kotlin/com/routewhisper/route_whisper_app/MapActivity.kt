@@ -26,7 +26,10 @@ import com.mapbox.navigation.core.trip.session.VoiceInstructionsObserver
 import com.mapbox.navigation.core.arrival.ArrivalObserver
 import android.os.Handler
 import android.os.Looper
+import android.widget.FrameLayout
 import io.flutter.plugin.common.MethodChannel
+import io.flutter.embedding.android.FlutterView
+import io.flutter.embedding.engine.FlutterEngineCache
 import com.mapbox.navigation.core.replay.route.ReplayRouteMapper
 import com.mapbox.navigation.base.formatter.DistanceFormatterOptions
 import com.mapbox.navigation.core.formatter.MapboxDistanceFormatter
@@ -60,8 +63,11 @@ import java.util.Locale
 @OptIn(ExperimentalPreviewMapboxNavigationAPI::class)
 class MapActivity : AppCompatActivity() {
 
-    private companion object {
+    companion object {
         private const val TAG = "MapActivity"
+
+        // Store reference to current MapActivity instance for in-place updates
+        internal var currentInstance: MapActivity? = null
     }
 
     private var mapboxNavigation: MapboxNavigation? = null
@@ -111,6 +117,10 @@ class MapActivity : AppCompatActivity() {
     // Find Stops button for POI discovery during navigation
     private lateinit var findStopsButton: FloatingActionButton
 
+    // Flutter overlay for POI discovery
+    private lateinit var flutterContainer: FrameLayout
+    private var flutterView: FlutterView? = null
+
     // Waypoint arrival and departure tracking
     private var lastWaypointLocation: Point? = null
     private var isMonitoringDeparture = false
@@ -126,6 +136,9 @@ class MapActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_map)
 
+        // Store reference for in-place route updates
+        currentInstance = this
+
         // Initialize MapView
         mapView = findViewById(R.id.mapView)
 
@@ -134,6 +147,7 @@ class MapActivity : AppCompatActivity() {
         tripProgressView = findViewById(R.id.tripProgressView)
         recenterButton = findViewById<FloatingActionButton>(R.id.recenterButton)
         findStopsButton = findViewById<FloatingActionButton>(R.id.findStopsButton)
+        flutterContainer = findViewById(R.id.flutterContainer)
 
         // Initialize waypoint progress views
         waypointProgressCard = findViewById(R.id.waypointProgressCard)
@@ -965,33 +979,111 @@ class MapActivity : AppCompatActivity() {
     }
 
     private fun onFindStopsButtonClick() {
-        Log.d(TAG, "Find Stops button clicked - launching POI discovery overlay")
+        Log.d(TAG, "Find Stops button clicked - showing POI discovery overlay")
 
-        try {
-            // Launch TransparentFlutterActivity as an overlay
-            // The shared FlutterEngine will allow it to access Flutter state
-            val intent = android.content.Intent(this, TransparentFlutterActivity::class.java).apply {
-                putExtra(TransparentFlutterActivity.EXTRA_ROUTE, "/poi-discovery")
+        if (flutterView == null) {
+            // Get the shared Flutter engine from cache
+            val engine = FlutterEngineCache
+                .getInstance()
+                .get(MainActivity.SHARED_ENGINE_ID)
+
+            if (engine == null) {
+                Log.e(TAG, "❌ Flutter engine not available")
+                return
             }
 
-            startActivity(intent)
-            Log.d(TAG, "✅ POI discovery overlay launched")
-        } catch (e: Exception) {
-            Log.e(TAG, "❌ Error launching POI overlay: ${e.message}", e)
+            // Create FlutterView and attach to engine
+            flutterView = FlutterView(this).also { view ->
+                view.attachToFlutterEngine(engine)
+                flutterContainer.addView(view)
+            }
+
+            Log.d(TAG, "✅ FlutterView created and attached to engine")
+        }
+
+        // Show the container
+        flutterContainer.visibility = View.VISIBLE
+
+        // Tell Flutter to show POI dashboard via method channel
+        MainActivity.methodChannelInstance?.invokeMethod(
+            "showOverlay",
+            mapOf("route" to "/poi-discovery")
+        )
+
+        Log.d(TAG, "✅ POI discovery overlay shown")
+    }
+
+    /**
+     * Update navigation route in-place (during active navigation)
+     *
+     * This method allows updating the route without launching a new MapActivity,
+     * which is critical for maintaining the "Never Leave Navigation" UX principle.
+     *
+     * Called from MainActivity when Flutter requests updateNavigationRoute.
+     */
+    fun updateNavigationRoute(
+        originLat: Double,
+        originLng: Double,
+        destLat: Double,
+        destLng: Double,
+        waypoints: List<Point>,
+        waypointNames: List<String>?
+    ) {
+        runOnUiThread {
+            Log.d(TAG, "🔄 Updating route in-place with ${waypoints.size} waypoints")
+
+            // Show feedback to user
             Snackbar.make(
                 mapView,
-                "Could not open POI discovery",
+                "Updating route...",
                 Snackbar.LENGTH_SHORT
             ).show()
+
+            // Reset leg tracking for updated route
+            previousLegIndex = 0
+            lastTriggeredWaypointLeg = -1
+
+            // Build Points from coordinates
+            val origin = Point.fromLngLat(originLng, originLat)
+            val destination = Point.fromLngLat(destLng, destLat)
+
+            // Request new route with updated waypoints
+            if (waypoints.isNotEmpty()) {
+                Log.d(TAG, "Recalculating route with ${waypoints.size} waypoints")
+                requestRouteWithWaypoints(origin, waypoints, destination)
+            } else {
+                Log.d(TAG, "Recalculating route without waypoints")
+                requestRoute(origin, destination)
+            }
+
+            // Note: Route will update automatically when requestRouteWithWaypoints completes
+            // via the callback that calls setNavigationRoutes()
         }
     }
 
     /**
-     * Override back button to allow returning to dashboard while navigation continues.
-     * The activity finishes normally, but navigation keeps running in the background.
-     * User can reopen via "View Navigation" button to see live navigation again.
+     * Hide the Flutter overlay (called from Flutter via method channel)
+     */
+    fun hideFlutterOverlay() {
+        runOnUiThread {
+            flutterContainer.visibility = View.GONE
+            Log.d(TAG, "Flutter overlay hidden")
+        }
+    }
+
+    /**
+     * Override back button to handle Flutter overlay or finish activity
      */
     override fun onBackPressed() {
+        // If Flutter overlay is visible, hide it first
+        if (flutterContainer.visibility == View.VISIBLE) {
+            Log.d(TAG, "Back button pressed - hiding Flutter overlay")
+            hideFlutterOverlay()
+            // Also notify Flutter to pop its navigation stack
+            MainActivity.methodChannelInstance?.invokeMethod("popRoute", null)
+            return
+        }
+
         Log.d(TAG, "Back button pressed - finishing activity, navigation continues")
         // Finish activity normally - navigation will continue in background
         super.onBackPressed()
@@ -999,6 +1091,9 @@ class MapActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+
+        // Clear instance reference
+        currentInstance = null
 
         Log.d(TAG, "MapActivity destroyed - navigation continues in background")
 

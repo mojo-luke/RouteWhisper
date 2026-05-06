@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'screens/navigation_dashboard.dart';
 import 'services/navigation_service.dart';
+import 'widgets/poi_dashboard.dart';
 
 // Global navigator key for navigation from services
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
@@ -40,7 +41,12 @@ class MyApp extends StatelessWidget {
           ),
           useMaterial3: true,
         ),
-        home: const NavigationDashboard(),
+        // Configure routes for different screens
+        initialRoute: '/',
+        routes: {
+          '/': (context) => const NavigationDashboard(),
+          '/poi-discovery': (context) => const POIDashboard(),
+        },
         debugShowCheckedModeBanner: false,
       ),
     );

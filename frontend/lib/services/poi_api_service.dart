@@ -45,6 +45,9 @@ class POIApiService {
           'Content-Type': 'application/json',
         },
         body: jsonEncode(requestBody),
+      ).timeout(
+        const Duration(seconds: 30),
+        onTimeout: () => throw Exception('POI request timed out after 30 seconds'),
       );
 
       print('📡 POI API Response: ${response.statusCode}');
