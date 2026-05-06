@@ -1,203 +1,85 @@
-# 🛠️ RouteWhisper Development Roadmap
+# Development Roadmap
 
-## Overview
+**Last updated:** 2026-05-06
 
-This document outlines the complete development plan for RouteWhisper, broken down into clear, trackable steps across three main phases.
+This is the single source of truth for what's done. When in doubt, trust git over any other doc.
 
-**Last Updated:** January 17, 2026
-**Recent Changes:**
-- ✅ Marked Step 3 (POI Data Pipeline) as complete - Mapbox Search API integration with 15 categories, Redis caching, 248 tests
-- ✅ Added Step 4.5 (Waypoint Management) as complete - Full waypoint system with live progress tracking, 683 tests
-- 📊 Updated progress: 23.5% complete (4/17 steps) - up from 12.5%
+A note on numbering: commits sometimes used different step numbers than this doc (e.g., waypoint work was tagged "Step 5" in commits but is "Step 4.5" here; "Step 3.5" was added retroactively after POI-during-nav work landed). The numbering below is the canonical version going forward.
 
 ---
 
-## **Phase 1: Core Application (MVP)**
+## Phase 1: Core application
 
-### **Step 1: Project Setup & Architecture** ✅
-- [x] Create Flutter project structure
-- [x] Set up Python FastAPI backend
-- [x] Configure development environment
-- [ ] Set up version control and CI/CD
-- [x] Design database schema
+### ✅ Step 1: Project setup & architecture
+Flutter project + FastAPI backend + dev environment + database schema. Done.
 
-### **Step 2: Basic Navigation Foundation** ✅
-- [x] Integrate Mapbox Navigation SDK
-- [x] Implement basic route calculation
-- [x] Set up location tracking
-- [x] Create basic map interface
-- [x] Implement turn-by-turn UI (maneuver instructions)
-- [x] Add navigation camera controls (auto-follow)
-- [x] Integrate voice guidance
-- [x] Add trip progress display
-- [x] Test full navigation functionality
+### ✅ Step 2: Basic navigation foundation
+Mapbox Navigation SDK integrated, route calc, location tracking, turn-by-turn UI, navigation camera, voice guidance, trip progress display. Commits `f56c701`, `381d9ab`, `e1f3f14`.
 
-### **Step 3: POI Data Pipeline** ✅
-- [x] Research and integrate POI data sources (Mapbox Search API with 15 categories)
-- [x] Build backend API for POI queries (POST /api/v1/route/pois)
-- [x] Implement route corridor extraction (5-mile buffer from polyline)
-- [x] Create POI ranking and filtering system (distance, category, rating)
-- [x] Set up data caching mechanisms (Redis with 1-hour TTL, 248 tests)
+### ✅ Step 2.5: Native Mapbox navigation activity
+`MapActivity` with Mapbox NavigationView, Flutter ↔ native method channel for launching it, shared `FlutterEngine` for state preservation. Commits `2a824a8`, `3e1926f`, `c959d72`.
 
-### **Step 4: Core Narration System**
-- [ ] Integrate Text-to-Speech functionality
-- [ ] Implement fact delivery timing
-- [ ] Create fact ranking algorithm
-- [ ] Build audio queue management
-- [ ] Test narration during navigation
+### ✅ Step 3: POI data pipeline
+Mapbox Search API integration (15 categories), `POST /api/v1/route/pois`, route corridor extraction (5-mile buffer), POI ranking, Redis caching with 1-hour TTL. Commit `5e8f4cf`.
 
-### **Step 4.5: Waypoint Management System** ✅
-- [x] Create WaypointManager service with state management
-- [x] Implement add/remove/reorder waypoints functionality
-- [x] Build waypoint status tracking (pending, active, completed, skipped)
-- [x] Create stop duration estimation and tracking
-- [x] Implement arrival/departure detection (>50m away AND >5mph)
-- [x] Build waypoint progress calculation for live display
-- [x] Add live waypoint progress card on MapActivity (Google Maps style)
-- [x] Write comprehensive test coverage (683 unit tests passing)
+### ✅ Step 3.5: POI discovery during active navigation
+"Find Stops" FAB on `MapActivity`, opens POI modal via `TransparentFlutterActivity`, adding a POI updates the route in-place without leaving navigation. Commit `c959d72`.
 
-### **Step 5: Hierarchical POI Strategy**
-- [ ] Implement trip distance detection
-- [ ] Create POI filtering by trip scale (Long/Regional/Local)
-- [ ] Build different data source integrations for each scale
-- [ ] Test POI relevance across different trip types
+### ❌ Step 4: Core narration system
+**Headline feature, not started.** TTS integration, fact delivery timing, fact-ranking algorithm, audio queue management. The app's name is "RouteWhisper" — this is the product thesis.
 
-### **Step 6: Time Budget System**
-- [ ] Create time budget user interface
-- [ ] Implement suggestion filtering based on time constraints
-- [ ] Build dynamic time adjustment logic
-- [ ] Test time-aware recommendation system
+### ✅ Step 4.5: Waypoint management
+Add/remove/reorder waypoints, status tracking (pending/active/completed/skipped), stop duration tracking, arrival/departure detection (>50m AND >5mph), live waypoint progress card on `MapActivity`. Commits `58a2261`, `9b4183a`. *(Numbered "Step 5" in those commits.)*
 
-### **Step 7: Road Trip Stop Recommendations**
-- [ ] Integrate business/attraction APIs (Yelp, Google Places)
-- [ ] Build recommendation engine for stops
-- [ ] Create stop categorization system
-- [ ] Implement user interest profiling
-- [ ] Test recommendation relevance and timing
+### ❌ Step 5: Hierarchical POI strategy
+Trip distance detection (long/regional/local), POI filtering by trip scale.
 
-### **Step 8: Essential Travel Services**
-- [ ] Integrate gas station APIs (GasBuddy)
-- [ ] Implement restroom finder functionality
-- [ ] Build fuel level monitoring system
-- [ ] Create emergency service suggestions
-- [ ] Test practical service recommendations
+### ❌ Step 6: Time budget system
+User-set time flexibility, suggestion filtering by time constraints, dynamic adjustment.
 
-### **Step 9: Road Trip Buddy Mode**
-- [ ] Design dual UI system (Driver vs Passenger modes)
-- [ ] Implement real-time route synchronization
-- [ ] Build collaborative decision-making interface
-- [ ] Create voice confirmation system for drivers
-- [ ] Test multi-user collaboration features
+### ❌ Step 7: Road trip stop recommendations
+Beyond the existing POI search — interest profiling, stop categorization (food/shopping/outdoor/etc.).
 
-### **Step 10: Multi-Day Trip Planning**
-- [ ] Build trip segmentation logic
-- [ ] Integrate hotel booking APIs
-- [ ] Create day-by-day itinerary system
-- [ ] Implement accommodation recommendations
-- [ ] Test multi-day planning workflow
+### ❌ Step 8: Essential travel services
+Gas stations (GasBuddy), restroom finder, fuel level monitoring.
 
-### **Step 11: User Experience & Polish**
-- [ ] Design and implement complete UI/UX
-- [ ] Add user onboarding and tutorials
-- [ ] Implement user preferences and settings
-- [ ] Create trip history and favorites
-- [ ] Optimize performance and battery usage
+### ❌ Step 9: Buddy mode
+Driver/passenger UI split, real-time route sync between devices.
 
-### **Step 12: Testing & Quality Assurance**
-- [ ] Comprehensive testing across different trip types
-- [ ] Real-world driving tests
-- [ ] Performance optimization
-- [ ] Bug fixes and stability improvements
-- [ ] User acceptance testing
+### ❌ Step 10: Multi-day trip planning
+Trip segmentation, hotel API integration, day-by-day itineraries.
+
+### ❌ Step 11: UX & polish
+Onboarding, preferences, trip history, performance/battery.
+
+### ❌ Step 12: Testing & QA
+Real-world drive tests, performance optimization, UAT.
 
 ---
 
-## **Phase 2: Vehicle Integration**
+## Phase 2: Vehicle integration
 
-### **Step 13: CarPlay Integration**
-- [ ] Set up Apple CarPlay development environment
-- [ ] Design CarPlay-optimized UI
-- [ ] Implement CarPlay-specific navigation flows
-- [ ] Test on various CarPlay-enabled vehicles
-
-### **Step 14: Android Auto Integration**
-- [ ] Set up Android Auto development environment
-- [ ] Design Android Auto-optimized UI
-- [ ] Implement Android Auto-specific features
-- [ ] Test on various Android Auto-enabled vehicles
-
-### **Step 15: Vehicle Integration Polish**
-- [ ] Optimize performance for car systems
-- [ ] Implement seamless phone-to-car handoff
-- [ ] Add vehicle-specific voice commands
-- [ ] Comprehensive car integration testing
+### ❌ Steps 13–15: CarPlay, Android Auto, polish
 
 ---
 
-## **Phase 3: Future Enhancements**
+## Phase 3: Future enhancements
 
-### **Step 16: Advanced Features**
-- [ ] Weather integration
-- [ ] EV charging station support
-- [ ] Community features and user-generated content
-- [ ] Premium features and monetization
-- [ ] Analytics and trip insights
+### ❌ Step 16: Advanced features
+Weather, EV charging, community content, monetization, analytics.
 
 ---
 
-## Progress Tracking
+## Infrastructure (not on the step list, but done)
 
-### Phase 1 Progress: 4/13 Steps Complete (30.8%)
-- [x] Foundation Phase (Steps 1-5): 4/6 complete
-  - ✅ Step 1: Project Setup
-  - ✅ Step 2: Basic Navigation
-  - ✅ Step 3: POI Data Pipeline
-  - ❌ Step 4: Core Narration (not started)
-  - ✅ Step 4.5: Waypoint Management
-  - ❌ Step 5: Hierarchical POI Strategy (not started)
-- [ ] Feature Phase (Steps 6-10): 0/5 complete
-- [ ] Polish Phase (Steps 11-12): 0/2 complete
-
-### Phase 2 Progress: 0/3 Steps Complete
-- [ ] Vehicle Integration: 0/3 complete
-
-### Phase 3 Progress: 0/1 Steps Complete
-- [ ] Advanced Features: 0/1 complete
-
-**Overall Progress: 4/17 Steps Complete (23.5%)**
+- ✅ Provider state management migration (commits `691872e`, `d16d76e`)
+- ✅ Docker support for backend services (commit `4f84d1c`)
+- ✅ Local Mapbox docs library at `docs/mapbox/` (21 reference files)
 
 ---
 
-## Development Notes
+## Honest status summary
 
-### Dependencies
-- **Step 2** requires completion of **Step 1**
-- **Steps 3-12** can be worked on in parallel after **Step 2**
-- **Phase 2** requires **Phase 1** completion
-- **Phase 3** can begin after **Phase 2** or run in parallel
-
-### Estimated Timeline
-- **Phase 1**: 6-9 months (MVP)
-- **Phase 2**: 2-3 months (Vehicle Integration)
-- **Phase 3**: Ongoing (Future Features)
-
-### Key Milestones
-1. ✅ **Basic Navigation Working** (After Step 2) - COMPLETE
-   - ✅ Route calculation and display
-   - ✅ Turn-by-turn UI
-   - ✅ Navigation camera
-   - ✅ Voice guidance
-2. ✅ **POI Discovery System** (After Step 3) - COMPLETE
-   - ✅ Backend POI search with Mapbox API
-   - ✅ Route corridor extraction
-   - ✅ POI ranking and caching
-   - ✅ Flutter POI dashboard with 15 categories
-3. ✅ **Waypoint Management** (After Step 4.5) - COMPLETE
-   - ✅ Add/remove/reorder waypoints
-   - ✅ Live progress tracking
-   - ✅ Arrival/departure detection
-   - ✅ 683 unit tests
-4. **First POI Narration** (After Step 4)
-5. **MVP Complete** (After Step 12)
-6. **Car Integration Complete** (After Step 15)
-7. **Full Feature Set** (After Step 16) 
+- **Done:** Steps 1, 2, 2.5, 3, 3.5, 4.5 = 6 of 19 (~32%) — but several of these were unplanned additions, so the original roadmap is ~5/17 (~29%).
+- **Headline feature unbuilt:** Step 4 (TTS narration). Time has gone into infrastructure (waypoints, POI plumbing, Provider migration, the Flutter↔native engine fix) rather than the product thesis.
+- **Phase 2 and 3 should not be planned in detail until Phase 1 has the narration feature working** — without it, this is a generic Mapbox nav wrapper.

@@ -17,18 +17,19 @@ RouteWhisper combines real-time navigation with AI-powered storytelling to trans
 
 ```
 RouteWhisper/
-├── frontend/          # Flutter mobile app
-│   ├── lib/           # Dart source code
-│   ├── assets/        # Images, icons, and other assets
-│   └── pubspec.yaml   # Flutter dependencies
-├── backend/           # Python FastAPI backend
-│   ├── app/           # Application code
-│   ├── tests/         # Test files
-│   ├── requirements.txt # Python dependencies
-│   └── env.example    # Environment variables template
-├── docs/              # Documentation
-├── Overview.md        # Detailed feature specifications
-└── Development-Roadmap.md # Step-by-step development plan
+├── frontend/          # Flutter mobile app + native Android (Mapbox Navigation SDK)
+│   ├── lib/                # Dart source (services, widgets, screens)
+│   ├── android/            # Native Android (Kotlin) — MapActivity, FlutterEngine
+│   ├── integration_test/   # Dart integration tests
+│   └── UX.md               # UX rules
+├── backend/           # Python FastAPI + Redis + Postgres + MongoDB (via Docker)
+│   ├── app/                # Application code
+│   ├── tests/              # pytest tests
+│   └── DOCKER_SETUP.md     # Quick start
+├── docs/mapbox/       # 21-file local Mapbox SDK reference library
+├── Claude.md          # Instructions for Claude Code sessions
+├── Overview.md        # Product vision and design decisions
+└── Development-Roadmap.md  # Single source of truth for status
 ```
 
 ## 🛠️ Development Setup
@@ -41,38 +42,27 @@ RouteWhisper/
 - **PostgreSQL**: ^13 (for backend database)
 - **Redis**: ^6 (for caching)
 
-### Backend Setup
+### Backend Setup (Docker — preferred)
 
-1. **Navigate to backend directory**
-   ```bash
-   cd backend
-   ```
+```bash
+cd backend
+cp env.example .env  # add your MAPBOX_ACCESS_TOKEN
+docker-compose up -d
+```
 
-2. **Create virtual environment**
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
+Starts FastAPI (`:8000`), Redis (`:6379`), Postgres (`:5432`), MongoDB (`:27017`). See `backend/DOCKER_SETUP.md` for details.
 
-3. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
+API docs at http://localhost:8000/docs.
 
-4. **Set up environment variables**
-   ```bash
-   cp env.example .env
-   # Edit .env with your actual API keys and database URLs
-   ```
+### Backend Setup (without Docker)
 
-5. **Run the backend**
-   ```bash
-   cd app
-   python main.py
-   ```
-
-   The API will be available at `http://localhost:8000`
-   API Documentation: `http://localhost:8000/docs`
+```bash
+cd backend
+python -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+cp env.example .env  # add your keys
+cd app && python main.py
+```
 
 ### Frontend Setup
 
@@ -91,29 +81,24 @@ RouteWhisper/
    flutter run
    ```
 
-## 📊 Development Progress
+## 📊 Status
 
-Current Status: **Step 1 - Project Setup & Architecture** ✅
+Phase 1 progress: ~6 of 19 steps done (~32%). See [Development-Roadmap.md](Development-Roadmap.md) for the canonical list.
 
-See [Development-Roadmap.md](Development-Roadmap.md) for detailed progress tracking.
+Working today: turn-by-turn navigation (Mapbox), route calculation, POI discovery along route (Mapbox Search API + Redis caching), POI discovery *during* active navigation, multi-stop waypoint management with arrival/departure detection.
+
+Not yet built: TTS narration of facts (Step 4 — the headline feature), trip-scale POI strategy, time-budget system, and everything in Phase 2 (CarPlay/Android Auto) and Phase 3.
 
 ## 🔧 API Documentation
 
-Once the backend is running, visit:
-- **Interactive API Docs**: http://localhost:8000/docs
-- **ReDoc Documentation**: http://localhost:8000/redoc
-- **Health Check**: http://localhost:8000/health
-
-## 🎯 Next Steps
-
-1. **Complete Step 1**: Finish project setup and architecture
-2. **Step 2**: Implement basic navigation foundation with Mapbox
-3. **Step 3**: Build POI data pipeline
-4. **Step 4**: Add core narration system
+With the backend running:
+- Interactive: http://localhost:8000/docs
+- ReDoc: http://localhost:8000/redoc
+- Health: http://localhost:8000/health
 
 ## 📝 Contributing
 
-This is currently a private development project. See [Development-Roadmap.md](Development-Roadmap.md) for the complete development plan.
+Private project. See [Development-Roadmap.md](Development-Roadmap.md) for the development plan and [Claude.md](Claude.md) for codebase conventions.
 
 ## 📄 License
 

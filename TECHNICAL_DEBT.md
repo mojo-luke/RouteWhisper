@@ -57,63 +57,10 @@
 
 ---
 
-### 3. Waypoint Progress Display (Google Maps-style)
-**Issue**: Only shows total trip progress, not individual waypoint progress.
-
-**Current Behavior**:
-- Top: Turn-by-turn instructions (maneuver view)
-- Bottom: Total trip ETA/distance (trip progress view)
-- No indication of which waypoint you're heading to or how far to next stop
-
-**Proposed Behavior** (Google Maps-style):
-- Top: Turn-by-turn instructions (keep as-is)
-- Middle: **NEW** Waypoint progress card showing:
-  - "Next stop: [Waypoint Name]" (e.g., "Next stop: Shell Gas Station")
-  - Distance to waypoint (e.g., "2.3 mi")
-  - ETA to waypoint (e.g., "5 min")
-  - Waypoint number indicator (e.g., "Stop 1 of 3")
-- Bottom: Total trip ETA/distance (keep as-is)
-
-**Implementation Requirements**:
-1. **Data Flow Changes**:
-   - Pass waypoint names from Flutter to Android (currently only coordinates are passed)
-   - Store waypoint names array in MapActivity alongside coordinates
-   - Match leg index to waypoint name
-
-2. **UI Changes**:
-   - Add new TextView/CardView in `activity_map.xml` between maneuver and trip progress views
-   - Create custom view or use Material Card with TextViews
-   - Update in RouteProgressObserver using `currentLegProgress.distanceRemaining` and `durationRemaining`
-
-3. **Logic**:
-   - Check if current leg is intermediate (not final destination)
-   - If intermediate: Show waypoint card with leg-specific progress
-   - If final leg: Hide waypoint card (or show "Final destination")
-
-**Impact**: Medium - Significantly improves UX for multi-waypoint trips, matches user expectations from Google Maps
-
-**Effort**: 3-4 hours
-- 1 hour: Update method channel to pass waypoint names
-- 1 hour: Create waypoint progress UI component
-- 1 hour: Wire up logic to update from RouteProgressObserver
-- 1 hour: Testing with multiple waypoints
-
-**When**: Before marking Step 5 (Waypoint Management) as complete
-
-**Files**:
-- `frontend/lib/services/navigation_service.dart` - Add waypoint names to startNavigation call
-- `frontend/android/app/src/main/kotlin/.../MainActivity.kt` - Accept waypoint names in Intent
-- `frontend/android/app/src/main/kotlin/.../MapActivity.kt` - Store and display waypoint names
-- `frontend/android/app/src/main/res/layout/activity_map.xml` - Add waypoint progress view
-
-**Priority Note**: This is listed as Medium but should be done before considering Step 5 complete.
-
----
-
 ## Low Priority
 
-(Add low-priority items here)
+(none recorded)
 
 ---
 
-**Last Updated**: January 10, 2026
+**Last Updated**: 2026-05-06 (item #3, Google Maps-style waypoint progress display, removed — shipped in commits `58a2261` / `9b4183a`)
