@@ -8,9 +8,7 @@ import 'navigation_service.dart';
 enum NavigationState {
   idle,
   calculating,
-  ready,
   navigating,
-  paused,
   completed,
   cancelled,
 }

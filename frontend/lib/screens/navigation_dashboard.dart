@@ -7,7 +7,6 @@ import '../widgets/waypoint_list.dart';
 import '../widgets/edit_stop_duration_dialog.dart';
 import '../widgets/search_waypoint_dialog.dart';
 import '../models/waypoint.dart';
-import 'active_navigation_screen.dart';
 
 class NavigationDashboard extends StatefulWidget {
   const NavigationDashboard({super.key});
@@ -40,12 +39,8 @@ class _NavigationDashboardState extends State<NavigationDashboard> {
         return 'Ready to start your journey';
       case NavigationState.calculating:
         return 'Finding the best route...';
-      case NavigationState.ready:
-        return 'Route calculated • Ready to navigate';
       case NavigationState.navigating:
         return 'Navigation active • Drive safely';
-      case NavigationState.paused:
-        return 'Navigation paused';
       case NavigationState.completed:
         return 'You have arrived at your destination!';
       case NavigationState.cancelled:
@@ -159,8 +154,7 @@ class _NavigationDashboardState extends State<NavigationDashboard> {
 
           // Show route info when navigating
           if (NavigationService.currentRoute != null &&
-              (currentState == NavigationState.ready ||
-                  currentState == NavigationState.navigating)) ...[
+              currentState == NavigationState.navigating) ...[
             const SizedBox(height: 16),
             Container(
               padding: const EdgeInsets.all(12),
@@ -774,19 +768,9 @@ class _NavigationDashboardState extends State<NavigationDashboard> {
         buttonColor = Colors.orange;
         onPressed = null;
         break;
-      case NavigationState.ready:
-        buttonText = 'Start Navigation';
-        buttonColor = Colors.green;
-        onPressed = _launchNavigation;
-        break;
       case NavigationState.navigating:
         buttonText = 'View Navigation';
         buttonColor = Colors.green;
-        onPressed = () => NavigationService.openMapView();
-        break;
-      case NavigationState.paused:
-        buttonText = 'Resume Navigation';
-        buttonColor = Colors.yellow;
         onPressed = () => NavigationService.openMapView();
         break;
       case NavigationState.completed:
@@ -989,22 +973,6 @@ class _NavigationDashboardState extends State<NavigationDashboard> {
     );
   }
 
-  void _launchNavigation() {
-    // Launch Flutter navigation screen
-    // Uses short test route for easier waypoint testing
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => const ActiveNavigationScreen(
-          originLat: 37.7955,  // Embarcadero Center
-          originLng: -122.3937,
-          destLat: 37.8080,     // Fisherman's Wharf
-          destLng: -122.4177,
-        ),
-      ),
-    );
-  }
-
   void _showSettingsDialog() {
     showDialog(
       context: context,
@@ -1069,12 +1037,8 @@ class _NavigationDashboardState extends State<NavigationDashboard> {
         return Colors.blue;
       case NavigationState.calculating:
         return Colors.orange;
-      case NavigationState.ready:
-        return Colors.green;
       case NavigationState.navigating:
         return Colors.green;
-      case NavigationState.paused:
-        return Colors.yellow;
       case NavigationState.completed:
         return Colors.purple;
       case NavigationState.cancelled:
@@ -1088,12 +1052,8 @@ class _NavigationDashboardState extends State<NavigationDashboard> {
         return Icons.explore;
       case NavigationState.calculating:
         return Icons.route;
-      case NavigationState.ready:
-        return Icons.play_arrow;
       case NavigationState.navigating:
         return Icons.navigation;
-      case NavigationState.paused:
-        return Icons.pause;
       case NavigationState.completed:
         return Icons.check_circle;
       case NavigationState.cancelled:

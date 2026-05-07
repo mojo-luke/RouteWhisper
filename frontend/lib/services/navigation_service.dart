@@ -115,13 +115,10 @@ class NavigationService {
 
   static Future<String?> openMapView() => _controller.openMapView();
 
-  // Legacy compatibility methods (can be removed later)
-  static bool get canStart => _controller.currentState == NavigationState.ready;
   static bool get canCancel => [
-    NavigationState.calculating,
-    NavigationState.ready,
-    NavigationState.navigating,
-  ].contains(_controller.currentState);
+        NavigationState.calculating,
+        NavigationState.navigating,
+      ].contains(_controller.currentState);
 
   // ========== POI Discovery Methods ==========
 
