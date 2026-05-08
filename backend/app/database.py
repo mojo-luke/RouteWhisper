@@ -178,16 +178,79 @@ class TripCollaboration(Document):
 
 class CachedAPIResponse(Document):
     """Cache external API responses (MongoDB)"""
-    
+
     api_source: str  # "yelp", "google_places", "wikipedia", etc.
     query_hash: str  # Hash of the query parameters
     response_data: dict
     cached_at: datetime
     expires_at: datetime
-    
+
     class Settings:
         name = "cached_api_responses"
         indexes = ["api_source", "query_hash", "expires_at"]
+
+
+class WaypointStopHistoryDoc(Document):
+    """Persisted waypoint stop history, keyed by Supabase user id.
+
+    Mirrors the wire-format `WaypointStopHistory` Pydantic model in
+    `app/models.py` but adds the authenticated user id and the document
+    indexes the analytics endpoints rely on. Don't import this in API
+    request signatures — keep request shapes in `models.py`, persist via
+    this class.
+    """
+
+    user_id: str
+    waypoint_id: str
+    waypoint_name: str
+    waypoint_category: Optional[str] = None
+    latitude: float
+    longitude: float
+
+    planned_duration_minutes: int
+    actual_duration_minutes: int
+    duration_difference_minutes: Optional[int] = None
+
+    arrival_time: datetime
+    departure_time: datetime
+
+    day_of_week: Optional[int] = None
+    hour_of_day: Optional[int] = None
+    is_weekend: Optional[bool] = None
+    is_automatic_departure: Optional[bool] = False
+
+    waypoint_order: int
+    total_waypoints: Optional[int] = None
+
+    recorded_at: datetime = datetime.utcnow()
+
+    class Settings:
+        name = "waypoint_stop_history"
+        indexes = [
+            "user_id",
+            [("user_id", 1), ("waypoint_category", 1)],
+            [("user_id", 1), ("hour_of_day", 1)],
+        ]
+
+
+class UserProfile(Document):
+    """Per-user preferences. One document per Supabase user, looked up by
+    `user_id` — that's the unique index on the collection. We keep the
+    Supabase id in a normal field rather than as `_id` so we don't have to
+    fight Beanie's default ObjectId primary key.
+    """
+
+    user_id: str
+    preferred_poi_types: list = []
+    default_time_budget_minutes: Optional[int] = None
+    dietary_restrictions: list = []
+    updated_at: datetime = datetime.utcnow()
+
+    class Settings:
+        name = "user_profiles"
+        indexes = [
+            [("user_id", 1)],  # unique enforced at app layer to keep schema simple
+        ]
 
 # =============================================================================
 # Redis Setup (Caching & Sessions)
@@ -216,7 +279,13 @@ async def init_mongodb():
     client = AsyncIOMotorClient(MONGODB_URL)
     await init_beanie(
         database=client[MONGODB_DATABASE],
-        document_models=[POIContent, TripCollaboration, CachedAPIResponse]
+        document_models=[
+            POIContent,
+            TripCollaboration,
+            CachedAPIResponse,
+            WaypointStopHistoryDoc,
+            UserProfile,
+        ],
     )
 
 # Redis initialization

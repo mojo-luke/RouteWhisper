@@ -3,13 +3,17 @@ RouteWhisper Backend API
 Main FastAPI application entry point
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import redis.asyncio as aioredis
 import os
 import logging
+from datetime import datetime
+from typing import Optional
 from dotenv import load_dotenv
+
+from pydantic import BaseModel, Field
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -23,6 +27,14 @@ from app.services.mapbox_search import MapboxSearchService
 from app.services.poi_ranking import POIRankingService
 from app.services.cache import POICacheService
 from app.utils.polyline import decode_polyline, calculate_bounds
+
+# Auth + persistence
+from app.auth import CurrentUser, get_current_user
+from app.database import (
+    init_mongodb,
+    UserProfile,
+    WaypointStopHistoryDoc,
+)
 
 # Global Redis client
 redis_client = None
@@ -51,6 +63,11 @@ async def startup():
     print("🚀 Starting RouteWhisper API...")
     await get_redis()
     print("✅ Redis initialized successfully!")
+    if os.getenv("MONGODB_URL"):
+        await init_mongodb()
+        print("✅ MongoDB initialized successfully!")
+    else:
+        print("⚠️ MONGODB_URL not set; persistence endpoints will fail.")
 
 @app.on_event("shutdown")
 async def shutdown():
@@ -112,7 +129,10 @@ async def root():
 
 # POI Discovery Endpoint (Step 3)
 @app.post("/api/v1/route/pois", response_model=POIResponse)
-async def discover_route_pois(request: POIRequest):
+async def discover_route_pois(
+    request: POIRequest,
+    user: CurrentUser = Depends(get_current_user),
+):
     """
     Discover POIs along a route corridor.
 
@@ -157,6 +177,12 @@ async def discover_route_pois(request: POIRequest):
             request.corridor_radius_miles
         )
 
+        # Look up the caller's preference list — applied as a final stable
+        # re-order after either cache hits or fresh computation, so the cache
+        # stays shared across users.
+        profile = await UserProfile.find_one(UserProfile.user_id == user.id)
+        preferred_categories = profile.preferred_poi_types if profile else []
+
         # Check cache
         cached_pois = await cache_service.get_cached_pois(cache_key)
         if cached_pois:
@@ -165,6 +191,9 @@ async def discover_route_pois(request: POIRequest):
             bounds = calculate_bounds(route_points)
 
             logger.info(f"Cache hit! Returning {len(cached_pois)} cached POIs")
+            cached_pois = POIRankingService.apply_preferences(
+                cached_pois, preferred_categories
+            )
             return POIResponse(
                 pois=cached_pois,
                 total_found=len(cached_pois),
@@ -229,11 +258,17 @@ async def discover_route_pois(request: POIRequest):
 
         logger.info(f"After ranking/filtering: {len(final_pois)} POIs")
 
-        # Step 7: Cache results
+        # Step 7: Cache results (cache the pre-preference ranking so the
+        # cache is shared across users; we re-order per-user below).
         await cache_service.cache_pois(cache_key, final_pois)
 
         # Step 8: Clean up
         await mapbox_service.close()
+
+        # Step 9: Apply user-specific preference re-ordering.
+        final_pois = POIRankingService.apply_preferences(
+            final_pois, preferred_categories
+        )
 
         # Return response
         return POIResponse(
@@ -332,26 +367,20 @@ async def geocode_place(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/v1/waypoints/history")
-async def record_waypoint_stop(history: WaypointStopHistory):
-    """
-    Record historical stop data for personalization.
+async def record_waypoint_stop(
+    history: WaypointStopHistory,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Record one stop's history for the authenticated user.
 
-    This endpoint receives data about user stops at waypoints to enable:
-    - Average stop time by category
-    - User preferences (always skip coffee, always stop at scenic)
-    - Time-of-day patterns
-    - Day-of-week patterns
-
-    Phase 4: Currently logs data only (MongoDB storage will be added in Phase 6)
+    Persists to MongoDB so the analytics endpoints (`/category-averages`,
+    `/time-patterns`) and Step 7's stop recommendations can read from it.
     """
     try:
-        # Calculate derived fields
         if history.duration_difference_minutes is None:
             history.duration_difference_minutes = (
                 history.actual_duration_minutes - history.planned_duration_minutes
             )
-
-        # Calculate time context if not provided
         if history.day_of_week is None:
             history.day_of_week = history.arrival_time.weekday()
         if history.hour_of_day is None:
@@ -359,34 +388,162 @@ async def record_waypoint_stop(history: WaypointStopHistory):
         if history.is_weekend is None:
             history.is_weekend = history.day_of_week >= 5
 
-        # Log the stop data (MongoDB storage in Phase 6)
-        logger.info(
-            f"📊 Stop recorded: {history.waypoint_name} "
-            f"(planned: {history.planned_duration_minutes}min, "
-            f"actual: {history.actual_duration_minutes}min, "
-            f"diff: {history.duration_difference_minutes:+d}min, "
-            f"auto: {history.is_automatic_departure})"
+        doc = WaypointStopHistoryDoc(
+            user_id=user.id,
+            waypoint_id=history.waypoint_id,
+            waypoint_name=history.waypoint_name,
+            waypoint_category=history.waypoint_category,
+            latitude=history.latitude,
+            longitude=history.longitude,
+            planned_duration_minutes=history.planned_duration_minutes,
+            actual_duration_minutes=history.actual_duration_minutes,
+            duration_difference_minutes=history.duration_difference_minutes,
+            arrival_time=history.arrival_time,
+            departure_time=history.departure_time,
+            day_of_week=history.day_of_week,
+            hour_of_day=history.hour_of_day,
+            is_weekend=history.is_weekend,
+            is_automatic_departure=history.is_automatic_departure,
+            waypoint_order=history.waypoint_order,
+            total_waypoints=history.total_waypoints,
+            recorded_at=datetime.utcnow(),
         )
-        logger.info(
-            f"   📍 Location: ({history.latitude}, {history.longitude})"
-        )
-        logger.info(
-            f"   📅 Time: {history.arrival_time.strftime('%A %I:%M%p')} "
-            f"(day {history.day_of_week}, hour {history.hour_of_day})"
-        )
-        if history.waypoint_category:
-            logger.info(f"   🏷️  Category: {history.waypoint_category}")
+        await doc.insert()
 
-        return {
-            "success": True,
-            "stop_id": history.waypoint_id,
-            "message": "Stop history recorded successfully",
-            "note": "Currently logging only - MongoDB storage will be added in Phase 6"
-        }
+        logger.info(
+            f"📊 Stop persisted: {history.waypoint_name} for user {user.id} "
+            f"(planned: {history.planned_duration_minutes}min, "
+            f"actual: {history.actual_duration_minutes}min)"
+        )
+        return {"success": True, "id": str(doc.id)}
 
     except Exception as e:
         logger.error(f"Failed to record stop history: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to record stop history: {str(e)}")
+
+
+@app.get("/api/v1/waypoints/history")
+async def list_waypoint_history(
+    user: CurrentUser = Depends(get_current_user),
+    limit: int = 100,
+):
+    """List the authenticated user's most recent stops, newest first."""
+    docs = (
+        await WaypointStopHistoryDoc.find(WaypointStopHistoryDoc.user_id == user.id)
+        .sort(-WaypointStopHistoryDoc.recorded_at)
+        .limit(limit)
+        .to_list()
+    )
+    return {"count": len(docs), "items": [d.model_dump(mode="json") for d in docs]}
+
+
+@app.get("/api/v1/waypoints/category-averages")
+async def waypoint_category_averages(
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Mean planned & actual stop duration grouped by category, per user.
+
+    Powers the frontend's `WaypointApiService.getCategoryAverages` stub —
+    used downstream to show "you usually stay 45min at restaurants" hints.
+    """
+    pipeline = [
+        {"$match": {"user_id": user.id, "waypoint_category": {"$ne": None}}},
+        {
+            "$group": {
+                "_id": "$waypoint_category",
+                "count": {"$sum": 1},
+                "avg_planned_minutes": {"$avg": "$planned_duration_minutes"},
+                "avg_actual_minutes": {"$avg": "$actual_duration_minutes"},
+                "avg_diff_minutes": {"$avg": "$duration_difference_minutes"},
+            }
+        },
+        {"$sort": {"count": -1}},
+    ]
+    rows = await WaypointStopHistoryDoc.aggregate(pipeline).to_list()
+    return {
+        "categories": [
+            {
+                "category": r["_id"],
+                "count": r["count"],
+                "avg_planned_minutes": round(r["avg_planned_minutes"] or 0, 1),
+                "avg_actual_minutes": round(r["avg_actual_minutes"] or 0, 1),
+                "avg_diff_minutes": round(r["avg_diff_minutes"] or 0, 1),
+            }
+            for r in rows
+        ]
+    }
+
+
+@app.get("/api/v1/waypoints/time-patterns")
+async def waypoint_time_patterns(
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Hour-of-day and day-of-week stop counts per user. Cheap and good
+    enough for first-pass "you usually stop around 11am" hints.
+    """
+    by_hour = await WaypointStopHistoryDoc.aggregate(
+        [
+            {"$match": {"user_id": user.id, "hour_of_day": {"$ne": None}}},
+            {"$group": {"_id": "$hour_of_day", "count": {"$sum": 1}}},
+            {"$sort": {"_id": 1}},
+        ]
+    ).to_list()
+    by_day = await WaypointStopHistoryDoc.aggregate(
+        [
+            {"$match": {"user_id": user.id, "day_of_week": {"$ne": None}}},
+            {"$group": {"_id": "$day_of_week", "count": {"$sum": 1}}},
+            {"$sort": {"_id": 1}},
+        ]
+    ).to_list()
+    return {
+        "by_hour": [{"hour": r["_id"], "count": r["count"]} for r in by_hour],
+        "by_day_of_week": [{"day": r["_id"], "count": r["count"]} for r in by_day],
+    }
+
+
+# =============================================================================
+# User profile
+# =============================================================================
+
+class UserProfilePayload(BaseModel):
+    """Wire shape for GET/PUT /user/profile."""
+    preferred_poi_types: list[str] = Field(default_factory=list)
+    default_time_budget_minutes: Optional[int] = None
+    dietary_restrictions: list[str] = Field(default_factory=list)
+
+
+async def _get_or_create_profile(user_id: str) -> UserProfile:
+    profile = await UserProfile.find_one(UserProfile.user_id == user_id)
+    if profile is None:
+        profile = UserProfile(user_id=user_id)
+        await profile.insert()
+    return profile
+
+
+@app.get("/api/v1/user/profile", response_model=UserProfilePayload)
+async def get_user_profile(user: CurrentUser = Depends(get_current_user)):
+    """Read the caller's profile, creating an empty one on first request."""
+    p = await _get_or_create_profile(user.id)
+    return UserProfilePayload(
+        preferred_poi_types=p.preferred_poi_types,
+        default_time_budget_minutes=p.default_time_budget_minutes,
+        dietary_restrictions=p.dietary_restrictions,
+    )
+
+
+@app.put("/api/v1/user/profile", response_model=UserProfilePayload)
+async def update_user_profile(
+    payload: UserProfilePayload,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Replace the caller's profile fields with the supplied values."""
+    p = await _get_or_create_profile(user.id)
+    p.preferred_poi_types = payload.preferred_poi_types
+    p.default_time_budget_minutes = payload.default_time_budget_minutes
+    p.dietary_restrictions = payload.dietary_restrictions
+    p.updated_at = datetime.utcnow()
+    await p.save()
+    return payload
 
 @app.get("/api/v1/poi/facts")
 async def get_poi_facts():

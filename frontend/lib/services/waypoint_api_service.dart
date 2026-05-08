@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../models/waypoint.dart';
+import 'auth_service.dart';
 
 /// API client for waypoint-related backend operations
 ///
@@ -47,13 +48,13 @@ class WaypointApiService {
 
       final response = await http.post(
         Uri.parse('$baseUrl/waypoints/history'),
-        headers: {'Content-Type': 'application/json'},
+        headers: _authedJsonHeaders(),
         body: jsonEncode(payload),
       );
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        print('✅ Stop history recorded: ${data['message']}');
+        print('✅ Stop history recorded: id=${data['id']}');
         return true;
       } else {
         print('❌ Failed to record stop history: ${response.statusCode}');
@@ -66,21 +67,59 @@ class WaypointApiService {
     }
   }
 
-  /// Get category-based average durations (future feature)
-  ///
-  /// Returns map of category -> average duration in minutes
-  static Future<Map<String, double>?> getCategoryAverages() async {
-    // Phase 6: Implement when backend analytics endpoint is ready
-    print('⏳ Category averages endpoint not yet implemented (Phase 6)');
-    return null;
+  /// Map of category → `{count, avg_planned_minutes, avg_actual_minutes,
+  /// avg_diff_minutes}` for the authenticated user. Returns null on error
+  /// or when not signed in.
+  static Future<Map<String, Map<String, num>>?> getCategoryAverages() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/waypoints/category-averages'),
+        headers: _authedJsonHeaders(),
+      );
+      if (response.statusCode != 200) {
+        print('⚠️ category-averages: HTTP ${response.statusCode}');
+        return null;
+      }
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final categories = (data['categories'] as List).cast<Map<String, dynamic>>();
+      return {
+        for (final c in categories)
+          c['category'] as String: {
+            'count': c['count'] as num,
+            'avg_planned_minutes': c['avg_planned_minutes'] as num,
+            'avg_actual_minutes': c['avg_actual_minutes'] as num,
+            'avg_diff_minutes': c['avg_diff_minutes'] as num,
+          },
+      };
+    } catch (e) {
+      print('❌ getCategoryAverages failed: $e');
+      return null;
+    }
   }
 
-  /// Get user's time-of-day patterns (future feature)
-  ///
-  /// Returns analytics about when user typically stops
+  /// Stop counts by hour-of-day and day-of-week for the authenticated user.
   static Future<Map<String, dynamic>?> getTimePatterns() async {
-    // Phase 6: Implement when backend analytics endpoint is ready
-    print('⏳ Time patterns endpoint not yet implemented (Phase 6)');
-    return null;
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/waypoints/time-patterns'),
+        headers: _authedJsonHeaders(),
+      );
+      if (response.statusCode != 200) {
+        print('⚠️ time-patterns: HTTP ${response.statusCode}');
+        return null;
+      }
+      return jsonDecode(response.body) as Map<String, dynamic>;
+    } catch (e) {
+      print('❌ getTimePatterns failed: $e');
+      return null;
+    }
+  }
+
+  static Map<String, String> _authedJsonHeaders() {
+    final token = AuthService.instance.accessToken;
+    return {
+      'Content-Type': 'application/json',
+      if (token != null) 'Authorization': 'Bearer $token',
+    };
   }
 }

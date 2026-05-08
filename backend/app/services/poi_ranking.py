@@ -97,6 +97,26 @@ class POIRankingService:
         return ranked
 
     @staticmethod
+    def apply_preferences(
+        pois: List[POI],
+        preferred_categories: Optional[List[str]] = None,
+    ) -> List[POI]:
+        """Re-order an already-ranked POI list so the user's preferred
+        categories come first, preserving the score-ordering within each
+        bucket. Idempotent and safe to call after cache hits.
+
+        Implemented as a stable sort to keep the existing rank order inside
+        the preferred-vs-other buckets.
+        """
+        if not preferred_categories or not pois:
+            return pois
+        prefs = set(preferred_categories)
+        return sorted(
+            pois,
+            key=lambda p: 0 if p.category in prefs else 1,
+        )
+
+    @staticmethod
     def filter_duplicates(
         pois: List[POI],
         distance_threshold_miles: float = 0.1

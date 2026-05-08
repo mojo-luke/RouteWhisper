@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'preferences_screen.dart';
 import '../services/navigation_service.dart';
 import '../widgets/route_input_dialog.dart';
 import '../widgets/poi_dashboard.dart';
@@ -82,6 +83,17 @@ class _NavigationDashboardState extends State<NavigationDashboard> {
         backgroundColor: const Color(0xFF2D2D2D),
         elevation: 0,
         centerTitle: true,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.tune, color: Colors.white),
+            tooltip: 'Preferences',
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => const PreferencesScreen(),
+              ),
+            ),
+          ),
+        ],
       ),
       body: SafeArea(
         child: Padding(

@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'auth_service.dart';
 
 /// POI API Service for communicating with RouteWhisper backend
 ///
@@ -39,10 +40,12 @@ class POIApiService {
     print('📦 Request body: ${jsonEncode(requestBody).substring(0, 100)}...');
 
     try {
+      final token = AuthService.instance.accessToken;
       final response = await _client.post(
         url,
         headers: {
           'Content-Type': 'application/json',
+          if (token != null) 'Authorization': 'Bearer $token',
         },
         body: jsonEncode(requestBody),
       ).timeout(

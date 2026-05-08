@@ -5,7 +5,6 @@ import '../widgets/poi_dashboard.dart';
 import '../main.dart'; // navigatorKey
 import 'navigation_host_bridge.dart';
 import 'navigation_service.dart';
-import 'poi_api_service.dart';
 
 enum NavigationState {
   idle,
