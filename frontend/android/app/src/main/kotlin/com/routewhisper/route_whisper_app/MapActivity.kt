@@ -1078,16 +1078,24 @@ class MapActivity : AppCompatActivity() {
             previousLegIndex = 0
             lastTriggeredWaypointLeg = -1
 
-            // Build Points from coordinates
-            val origin = Point.fromLngLat(originLng, originLat)
+            // For in-nav updates the route MUST start from the user's current
+            // location, not the original trip origin — otherwise the puck
+            // appears to "rewind" to where the trip began. Fall back to the
+            // supplied origin only if location isn't available yet.
+            val live = navigationLocationProvider.lastLocation
+            val origin = if (live != null) {
+                Point.fromLngLat(live.longitude, live.latitude)
+            } else {
+                Log.w(TAG, "⚠️ No live location during route update; using supplied origin")
+                Point.fromLngLat(originLng, originLat)
+            }
             val destination = Point.fromLngLat(destLng, destLat)
 
-            // Request new route with updated waypoints
             if (waypoints.isNotEmpty()) {
-                Log.d(TAG, "Recalculating route with ${waypoints.size} waypoints")
+                Log.d(TAG, "Recalculating route with ${waypoints.size} waypoints from current location")
                 requestRouteWithWaypoints(origin, waypoints, destination)
             } else {
-                Log.d(TAG, "Recalculating route without waypoints")
+                Log.d(TAG, "Recalculating route without waypoints from current location")
                 requestRoute(origin, destination)
             }
 
