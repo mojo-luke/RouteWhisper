@@ -62,6 +62,12 @@ class MainActivity : FlutterActivity() {
         return SHARED_ENGINE_ID
     }
 
+    // The shared engine's lifecycle is driven from RouteWhisperApplication via
+    // ProcessLifecycleOwner. If this activity also dispatched its own lifecycle to the
+    // engine, its onStop would fire AFTER MapActivity.onResume during a transition and
+    // pause the engine while MapActivity is foreground — freezing overlay setState calls.
+    override fun shouldDispatchAppLifecycleState(): Boolean = false
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
@@ -203,6 +209,21 @@ class MainActivity : FlutterActivity() {
         startActivity(intent)
 
         result.success("Map view opened")
+    }
+
+    override fun onPause() {
+        Log.d("MainActivity", "🟡 onPause (FlutterActivity will dispatch appIsInactive)")
+        super.onPause()
+    }
+
+    override fun onStop() {
+        Log.d("MainActivity", "🔴 onStop (FlutterActivity will dispatch appIsPaused)")
+        super.onStop()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        Log.d("MainActivity", "🟢 onResume (FlutterActivity dispatched appIsResumed)")
     }
 
     @OptIn(com.mapbox.navigation.base.ExperimentalPreviewMapboxNavigationAPI::class)

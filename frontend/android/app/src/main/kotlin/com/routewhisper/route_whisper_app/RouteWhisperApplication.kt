@@ -2,6 +2,9 @@ package com.routewhisper.route_whisper_app
 
 import android.app.Application
 import android.util.Log
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.ProcessLifecycleOwner
 import com.mapbox.navigation.base.options.NavigationOptions
 import com.mapbox.navigation.core.lifecycle.MapboxNavigationApp
 import io.flutter.embedding.engine.FlutterEngine
@@ -49,5 +52,32 @@ class RouteWhisperApplication : Application() {
             .put(MainActivity.SHARED_ENGINE_ID, flutterEngine)
 
         Log.d(TAG, "✅ Shared FlutterEngine created and cached: ${MainActivity.SHARED_ENGINE_ID}")
+
+        // Drive the shared engine's lifecycle channel from the *process* lifecycle, not
+        // any single activity's. ProcessLifecycleOwner only fires ON_RESUME when the first
+        // activity foregrounds and ON_STOP when the last activity backgrounds — so
+        // activity-to-activity hops (MainActivity → MapActivity) don't toggle it. Per-activity
+        // dispatch (FlutterActivity's default) caused MainActivity.onStop to clobber the
+        // engine into `paused` after MapActivity had already resumed it, which froze setState
+        // calls in overlay widgets like POIDashboard.
+        ProcessLifecycleOwner.get().lifecycle.addObserver(
+            LifecycleEventObserver { _, event ->
+                when (event) {
+                    Lifecycle.Event.ON_RESUME -> {
+                        Log.d(TAG, "🟢 ProcessLifecycle ON_RESUME -> appIsResumed")
+                        flutterEngine.lifecycleChannel.appIsResumed()
+                    }
+                    Lifecycle.Event.ON_PAUSE -> {
+                        Log.d(TAG, "🟡 ProcessLifecycle ON_PAUSE -> appIsInactive")
+                        flutterEngine.lifecycleChannel.appIsInactive()
+                    }
+                    Lifecycle.Event.ON_STOP -> {
+                        Log.d(TAG, "🔴 ProcessLifecycle ON_STOP -> appIsPaused")
+                        flutterEngine.lifecycleChannel.appIsPaused()
+                    }
+                    else -> Unit
+                }
+            }
+        )
     }
 }

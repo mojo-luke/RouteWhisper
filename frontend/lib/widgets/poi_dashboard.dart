@@ -54,6 +54,7 @@ class _POIDashboardState extends State<POIDashboard> {
     try {
       final response = await NavigationService.discoverPOIs();
 
+      print('🧪 POIDash: await returned, mounted=$mounted, response=${response == null ? "null" : "${response.pois.length} pois"}');
       if (!mounted) return;
       if (response != null) {
         setState(() {
@@ -61,13 +62,15 @@ class _POIDashboardState extends State<POIDashboard> {
           _cached = response.cached;
           _loading = false;
         });
+        print('🧪 POIDash: setState success done, _loading=$_loading, _pois=${_pois.length}');
       } else {
         setState(() {
           _error = 'Search already in progress. Please wait a moment, then refresh.';
           _loading = false;
         });
       }
-    } catch (e) {
+    } catch (e, st) {
+      print('🧪 POIDash: caught exception: $e\n$st');
       if (!mounted) return;
       setState(() {
         _error = 'Failed to find POIs: $e';
@@ -78,6 +81,7 @@ class _POIDashboardState extends State<POIDashboard> {
 
   @override
   Widget build(BuildContext context) {
+    print('🧪 POIDash.build: _loading=$_loading, _pois=${_pois.length}, _error=$_error');
     return Scaffold(
       appBar: AppBar(
         title: const Text('Nearby Points of Interest'),
