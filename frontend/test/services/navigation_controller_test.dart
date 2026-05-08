@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:frontend/models/waypoint.dart';
 import 'package:frontend/services/navigation_controller.dart';
 import 'package:frontend/services/navigation_service.dart';
+import 'package:frontend/services/poi_api_service.dart';
 
 import 'fake_navigation_host_bridge.dart';
 
@@ -260,6 +261,59 @@ void main() {
         fake.emitDestinationArrived();
 
         expect(controller.currentState, NavigationState.completed);
+      });
+    });
+
+    group('inbound: requestPoisOnMap', () {
+      test('with cached POIs, pushes them down via bridge.showPoisOnMap',
+          () async {
+        // Seed the static singleton with a fake POI response. This is the
+        // same path the live app populates after a successful fetch.
+        final response = POIResponse(
+          pois: [
+            POI(
+              id: 'p1',
+              name: 'Test Diner',
+              category: 'restaurant',
+              latitude: 37.5,
+              longitude: -122.4,
+              estimatedDurationMinutes: 30,
+              distanceFromRouteMiles: 0.4,
+            ),
+          ],
+          totalFound: 1,
+          cached: false,
+          corridorBounds: [-122.5, 37.4, -122.3, 37.6],
+        );
+        NavigationService.lastPOIResponseForTest = response;
+
+        fake.emitRequestPoisOnMap();
+        await Future<void>.delayed(Duration.zero);
+
+        final shown = fake.callsTo('showPoisOnMap');
+        expect(shown, hasLength(1));
+        expect(shown.single.args['bounds'],
+            [-122.5, 37.4, -122.3, 37.6]);
+        final pois = shown.single.args['pois'] as List;
+        expect(pois, hasLength(1));
+        expect(pois.first, {
+          // Bridge id is the array index, not poi.id (the backend currently
+          // dups that field across responses).
+          'id': '0',
+          'lat': 37.5,
+          'lng': -122.4,
+          'category': 'restaurant',
+        });
+      });
+
+      test('with no cached POIs and no polyline, does not crash or send',
+          () async {
+        NavigationService.lastPOIResponseForTest = null;
+        // No route polyline, so discoverPOIs() short-circuits to null.
+        fake.emitRequestPoisOnMap();
+        await Future<void>.delayed(Duration.zero);
+
+        expect(fake.callsTo('showPoisOnMap'), isEmpty);
       });
     });
 

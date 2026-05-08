@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import '../models/waypoint.dart';
+import '../widgets/poi_confirmation_sheet.dart';
 import '../widgets/poi_dashboard.dart';
 import '../main.dart'; // navigatorKey
 import 'navigation_host_bridge.dart';
 import 'navigation_service.dart';
+import 'poi_api_service.dart';
 
 enum NavigationState {
   idle,
@@ -39,10 +41,14 @@ class NavigationController extends ChangeNotifier {
       onDestinationArrived: _onDestinationArrived,
       onShowOverlay: _onShowOverlay,
       onPopRoute: _onPopRoute,
+      onRequestPoisOnMap: _onRequestPoisOnMap,
+      onPoiTapped: _onPoiTapped,
       onWaypointProgressRequest: _onWaypointProgressRequest,
     ));
     debugPrint('🎯 NavigationController initialized');
   }
+
+  NavigationHostBridge get bridge => _bridge;
 
   Future<String?> calculateRoute({
     required double originLat,
@@ -223,5 +229,156 @@ class NavigationController extends ChangeNotifier {
     if (Navigator.of(ctx).canPop()) {
       Navigator.of(ctx).pop();
     }
+  }
+
+  // FAB tap during navigation: fetch POIs (or reuse cached) and push them
+  // down to native for on-map rendering. The native side handles markers
+  // and the Google-style camera overview.
+  Future<void> _onRequestPoisOnMap() async {
+    try {
+      var response = NavigationService.lastPOIResponse;
+      response ??= await NavigationService.discoverPOIs();
+      if (response == null || response.pois.isEmpty) {
+        debugPrint('⚠️ No POIs to show on map');
+        return;
+      }
+      // The backend currently returns duplicate `poi.id` values for every POI
+      // in a response (truncates `mapbox_poi_id` to a prefix that's shared
+      // across all Mapbox POI URNs). Until that's fixed, identify POIs across
+      // the bridge by their position in this response. See memory:
+      // backend_poi_id_bug.md.
+      final pois = <Map<String, dynamic>>[];
+      for (var i = 0; i < response.pois.length; i++) {
+        final poi = response.pois[i];
+        pois.add({
+          'id': i.toString(),
+          'lat': poi.latitude,
+          'lng': poi.longitude,
+          'category': poi.category,
+        });
+      }
+      await _bridge.showPoisOnMap(pois: pois, bounds: response.corridorBounds);
+    } catch (e) {
+      debugPrint('❌ requestPoisOnMap failed: $e');
+    }
+  }
+
+  // User tapped a marker on the native map. The "poiId" here is the index
+  // into the cached response (see _onRequestPoisOnMap for why we don't trust
+  // the backend's poi.id). Native made flutterContainer visible before
+  // sending this event so the modal has somewhere to draw — we hide it
+  // again once the sheet dismisses (either path).
+  void _onPoiTapped(String poiId) async {
+    final ctx = navigatorKey.currentContext;
+    if (ctx == null) return;
+
+    final response = NavigationService.lastPOIResponse;
+    final index = int.tryParse(poiId);
+    if (response == null ||
+        index == null ||
+        index < 0 ||
+        index >= response.pois.length) {
+      debugPrint('⚠️ poiTapped fired with bad index: $poiId');
+      await _bridge.hideOverlay();
+      return;
+    }
+    final poi = response.pois[index];
+
+    final navigator = Navigator.of(ctx);
+    await navigator.push(_TransparentSheetRoute(
+      child: POIConfirmationSheet(poi: poi),
+    ));
+    await _bridge.hideOverlay();
+  }
+
+}
+
+/// Bottom-sheet-style route used while the live map is the actual background.
+///
+/// Why a custom route instead of `showModalBottomSheet`: the underlying
+/// Flutter route (NavigationDashboard home screen) has an opaque Scaffold
+/// that would paint over the native map. With `opaque: true`, Flutter detaches
+/// the route below so it doesn't paint at all — combined with a transparent
+/// FlutterSurfaceView on the native side, the native map shows through
+/// everywhere this route's content is transparent. The scrim and sheet are
+/// painted explicitly here.
+class _TransparentSheetRoute<T> extends PageRoute<T> {
+  final Widget child;
+
+  _TransparentSheetRoute({required this.child});
+
+  @override
+  bool get opaque => true;
+
+  @override
+  bool get maintainState => true;
+
+  @override
+  Color? get barrierColor => null;
+
+  @override
+  bool get barrierDismissible => true;
+
+  @override
+  String? get barrierLabel => 'Dismiss';
+
+  @override
+  Duration get transitionDuration => const Duration(milliseconds: 220);
+
+  @override
+  Widget buildPage(
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+  ) {
+    return _SheetScaffold(child: child);
+  }
+
+  @override
+  Widget buildTransitions(
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) {
+    final slide = Tween<Offset>(
+      begin: const Offset(0, 1),
+      end: Offset.zero,
+    ).chain(CurveTween(curve: Curves.easeOutCubic)).animate(animation);
+    return SlideTransition(position: slide, child: child);
+  }
+}
+
+class _SheetScaffold extends StatelessWidget {
+  final Widget child;
+
+  const _SheetScaffold({required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    // A bare Scaffold gives the sheet a ScaffoldMessenger so SnackBars fired
+    // from inside the sheet have somewhere to render *while the sheet is
+    // still on top* — important for the "undo" snack that pairs with the
+    // route update.
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      body: GestureDetector(
+        onTap: () => Navigator.of(context).maybePop(),
+        behavior: HitTestBehavior.opaque,
+        child: Container(
+          // Semi-opaque scrim — alpha-blends with the native map underneath
+          // because the FlutterSurfaceView is in renderTransparently mode.
+          color: Colors.black54,
+          alignment: Alignment.bottomCenter,
+          child: GestureDetector(
+            onTap: () {}, // absorb taps so they don't pop the route
+            child: Material(
+              type: MaterialType.transparency,
+              child: child,
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }

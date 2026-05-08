@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'navigation_controller.dart';
 import 'poi_api_service.dart';
 import 'waypoint_manager.dart';
@@ -184,6 +185,14 @@ class NavigationService {
   static void clearPOIs() {
     _lastPOIResponse = null;
     print('🗑️ POI discovery state cleared');
+  }
+
+  /// Test-only seam: stuff a [POIResponse] into the cache without going
+  /// through the network. Used by controller tests that need a known
+  /// response shape to drive `onRequestPoisOnMap`.
+  @visibleForTesting
+  static set lastPOIResponseForTest(POIResponse? response) {
+    _lastPOIResponse = response;
   }
 
   /// Helper to get category counts from POI list

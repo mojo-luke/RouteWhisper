@@ -8,8 +8,19 @@ import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.snackbar.Snackbar
 import com.mapbox.api.directions.v5.models.RouteOptions
 import com.mapbox.geojson.Point
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Typeface
 import com.mapbox.maps.MapView
 import com.mapbox.maps.Style
+import com.mapbox.maps.plugin.annotation.annotations
+import com.mapbox.maps.plugin.annotation.generated.OnPointAnnotationClickListener
+import com.mapbox.maps.plugin.annotation.generated.PointAnnotation
+import com.mapbox.maps.plugin.annotation.generated.PointAnnotationManager
+import com.mapbox.maps.plugin.annotation.generated.PointAnnotationOptions
+import com.mapbox.maps.plugin.annotation.generated.createPointAnnotationManager
 import com.mapbox.maps.plugin.locationcomponent.location
 import com.mapbox.navigation.base.extensions.applyDefaultNavigationOptions
 import com.mapbox.navigation.base.extensions.applyLanguageAndVoiceUnitOptions
@@ -28,6 +39,7 @@ import android.os.Handler
 import android.os.Looper
 import android.widget.FrameLayout
 import io.flutter.plugin.common.MethodChannel
+import io.flutter.embedding.android.FlutterSurfaceView
 import io.flutter.embedding.android.FlutterView
 import io.flutter.embedding.engine.FlutterEngineCache
 import com.mapbox.navigation.core.replay.route.ReplayRouteMapper
@@ -51,6 +63,7 @@ import com.mapbox.navigation.ui.maps.camera.data.MapboxNavigationViewportDataSou
 import com.mapbox.navigation.ui.maps.location.NavigationLocationProvider
 import com.mapbox.common.location.Location
 import com.mapbox.maps.CameraOptions
+import com.mapbox.maps.CoordinateBounds
 import com.mapbox.maps.EdgeInsets
 import com.mapbox.maps.extension.style.layers.properties.generated.Visibility
 import com.mapbox.maps.plugin.animation.camera
@@ -120,6 +133,13 @@ class MapActivity : AppCompatActivity() {
     // Flutter overlay for POI discovery
     private lateinit var flutterContainer: FrameLayout
     private var flutterView: FlutterView? = null
+
+    // POI map annotations — created lazily on first show, cleared on dismiss.
+    // Each annotation carries the POI id in its iconImage name so taps can
+    // round-trip back to Flutter for confirmation-sheet lookup.
+    private var poiAnnotationManager: PointAnnotationManager? = null
+    private val poiAnnotations = mutableListOf<PointAnnotation>()
+    private val poiIdByAnnotation = mutableMapOf<String, String>()
 
     // Waypoint arrival and departure tracking
     private var lastWaypointLocation: Point? = null
@@ -979,38 +999,53 @@ class MapActivity : AppCompatActivity() {
     }
 
     private fun onFindStopsButtonClick() {
-        Log.d(TAG, "Find Stops button clicked - showing POI discovery overlay")
+        // Toggle: if POIs are already on the map, clear them; otherwise ask
+        // Flutter to fetch+push (which will call back into showPoisOnMap).
+        // The flutterContainer stays hidden — we only attach + reveal it
+        // when a marker is tapped and we need to draw the confirmation sheet
+        // on top of the map.
+        if (poiAnnotations.isNotEmpty()) {
+            clearPoisFromMap()
+            return
+        }
 
+        MainActivity.methodChannelInstance?.invokeMethod(
+            "requestPoisOnMap",
+            null,
+        )
+        Log.d(TAG, "Requested POIs from Flutter")
+    }
+
+    /**
+     * Make the flutterContainer visible (attaching the FlutterView lazily)
+     * so a Flutter modal sheet can render on top of the map. Pair every call
+     * with [hideFlutterOverlay] when the sheet dismisses, otherwise the
+     * default Flutter route (home screen) keeps painting over the map.
+     */
+    private fun showFlutterOverlayContainer() {
         if (flutterView == null) {
-            // Get the shared Flutter engine from cache
             val engine = FlutterEngineCache
                 .getInstance()
                 .get(MainActivity.SHARED_ENGINE_ID)
-
             if (engine == null) {
                 Log.e(TAG, "❌ Flutter engine not available")
                 return
             }
-
-            // Create FlutterView and attach to engine
-            flutterView = FlutterView(this).also { view ->
+            // renderTransparently=true makes the underlying SurfaceView use
+            // PixelFormat.TRANSLUCENT so anywhere Flutter paints transparent
+            // pixels, the native map below shows through. The Dart side must
+            // cooperate by pushing a route whose chrome is also transparent —
+            // otherwise the home screen's opaque Scaffold covers the map.
+            val surfaceView = FlutterSurfaceView(this, true)
+            flutterView = FlutterView(this, surfaceView).also { view ->
+                view.setBackgroundColor(Color.TRANSPARENT)
                 view.attachToFlutterEngine(engine)
                 flutterContainer.addView(view)
             }
-
-            Log.d(TAG, "✅ FlutterView created and attached to engine")
+            flutterContainer.setBackgroundColor(Color.TRANSPARENT)
+            Log.d(TAG, "✅ Transparent FlutterView created and attached to engine")
         }
-
-        // Show the container
         flutterContainer.visibility = View.VISIBLE
-
-        // Tell Flutter to show POI dashboard via method channel
-        MainActivity.methodChannelInstance?.invokeMethod(
-            "showOverlay",
-            mapOf("route" to "/poi-discovery")
-        )
-
-        Log.d(TAG, "✅ POI discovery overlay shown")
     }
 
     /**
@@ -1069,6 +1104,154 @@ class MapActivity : AppCompatActivity() {
             flutterContainer.visibility = View.GONE
             Log.d(TAG, "Flutter overlay hidden")
         }
+    }
+
+    /**
+     * Render POIs as tappable map annotations and animate the camera to a
+     * corridor-bounds overview. Replaces any previously shown POIs. Each entry
+     * in [pois] is `{id, lat, lng, category}`. [bounds] is
+     * `[minLng, minLat, maxLng, maxLat]` (matching POIResponse.corridor_bounds).
+     */
+    fun showPoisOnMap(pois: List<Map<String, Any>>, bounds: List<Double>) {
+        runOnUiThread {
+            ensurePoiAnnotationManager()
+            clearPoiAnnotationsInternal()
+
+            val manager = poiAnnotationManager ?: return@runOnUiThread
+            for (entry in pois) {
+                val id = entry["id"] as? String ?: continue
+                val lat = (entry["lat"] as? Number)?.toDouble() ?: continue
+                val lng = (entry["lng"] as? Number)?.toDouble() ?: continue
+                val category = entry["category"] as? String ?: "default"
+
+                val options = PointAnnotationOptions()
+                    .withPoint(Point.fromLngLat(lng, lat))
+                    .withIconImage(buildPoiBitmap(category))
+                    .withIconSize(1.0)
+
+                val annotation = manager.create(options)
+                poiAnnotations.add(annotation)
+                poiIdByAnnotation[annotation.id] = id
+            }
+
+            // Camera overview — Google-style zoom-out so the user can see
+            // every POI at once. NavigationCamera is in FOLLOWING by default;
+            // switching to IDLE lets us drive the camera manually.
+            navigationCamera.requestNavigationCameraToIdle()
+            val cameraOptions = mapView.mapboxMap.cameraForCoordinateBounds(
+                CoordinateBounds(
+                    Point.fromLngLat(bounds[0], bounds[1]),
+                    Point.fromLngLat(bounds[2], bounds[3]),
+                ),
+                EdgeInsets(160.0, 64.0, 240.0, 64.0),
+                null,
+                null,
+            )
+            mapView.camera.easeTo(cameraOptions)
+            recenterButton.visibility = View.VISIBLE
+
+            Log.d(TAG, "✅ Showing ${poiAnnotations.size} POI markers")
+        }
+    }
+
+    /** Remove all POI markers and return the camera to follow-mode. */
+    fun clearPoisFromMap() {
+        runOnUiThread {
+            clearPoiAnnotationsInternal()
+            navigationCamera.requestNavigationCameraToFollowing()
+            recenterButton.visibility = View.GONE
+            Log.d(TAG, "POI markers cleared")
+        }
+    }
+
+    private fun ensurePoiAnnotationManager() {
+        if (poiAnnotationManager != null) return
+        val manager = mapView.annotations.createPointAnnotationManager()
+        manager.addClickListener(OnPointAnnotationClickListener { annotation ->
+            val poiId = poiIdByAnnotation[annotation.id]
+            if (poiId != null) {
+                // Reveal the Flutter overlay container so the confirmation
+                // sheet (a Flutter modal) actually draws on screen. Flutter
+                // will call back via "hideOverlay" once the sheet dismisses.
+                showFlutterOverlayContainer()
+                MainActivity.methodChannelInstance?.invokeMethod(
+                    "poiTapped",
+                    mapOf("poiId" to poiId),
+                )
+                Log.d(TAG, "POI tapped: $poiId")
+            }
+            true
+        })
+        poiAnnotationManager = manager
+    }
+
+    private fun clearPoiAnnotationsInternal() {
+        val manager = poiAnnotationManager ?: return
+        if (poiAnnotations.isNotEmpty()) {
+            manager.delete(poiAnnotations.toList())
+            poiAnnotations.clear()
+        }
+        poiIdByAnnotation.clear()
+    }
+
+    /**
+     * Build a category-tinted circular pin bitmap. Cheap and recognisable at
+     * highway speeds; can be replaced with proper drawables later without
+     * touching the annotation pipeline.
+     */
+    private fun buildPoiBitmap(category: String): Bitmap {
+        val size = 96
+        val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+
+        val fill = Paint().apply {
+            color = colorForCategory(category)
+            style = Paint.Style.FILL
+            isAntiAlias = true
+        }
+        val stroke = Paint().apply {
+            color = Color.WHITE
+            style = Paint.Style.STROKE
+            strokeWidth = 6f
+            isAntiAlias = true
+        }
+        val cx = size / 2f
+        val cy = size / 2f
+        val radius = size / 2f - 6f
+        canvas.drawCircle(cx, cy, radius, fill)
+        canvas.drawCircle(cx, cy, radius, stroke)
+
+        val glyph = glyphForCategory(category)
+        val textPaint = Paint().apply {
+            color = Color.WHITE
+            textSize = 44f
+            textAlign = Paint.Align.CENTER
+            typeface = Typeface.DEFAULT_BOLD
+            isAntiAlias = true
+        }
+        canvas.drawText(glyph, cx, cy + 16f, textPaint)
+
+        return bitmap
+    }
+
+    private fun colorForCategory(category: String): Int = when (category) {
+        "gas_station" -> Color.parseColor("#1976D2")  // blue
+        "restaurant" -> Color.parseColor("#E53935")   // red
+        "coffee" -> Color.parseColor("#6D4C41")       // brown
+        "scenic" -> Color.parseColor("#43A047")       // green
+        "hotel" -> Color.parseColor("#8E24AA")        // purple
+        "attraction" -> Color.parseColor("#FB8C00")   // orange
+        else -> Color.parseColor("#455A64")           // slate
+    }
+
+    private fun glyphForCategory(category: String): String = when (category) {
+        "gas_station" -> "G"
+        "restaurant" -> "R"
+        "coffee" -> "C"
+        "scenic" -> "S"
+        "hotel" -> "H"
+        "attraction" -> "A"
+        else -> "•"
     }
 
     /**

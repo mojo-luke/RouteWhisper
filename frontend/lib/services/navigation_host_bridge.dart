@@ -55,6 +55,27 @@ abstract class NavigationHostBridge {
   /// Open the native nav surface in display-only mode (no active route).
   Future<String?> openMapView();
 
+  /// Render the given POIs as tappable markers on the live map and animate
+  /// the camera to a corridor-bounds overview (Google-style zoom-out). [pois]
+  /// is a list of `{id, lat, lng, category}` maps — minimal data the native
+  /// renderer needs. [bounds] is `[minLng, minLat, maxLng, maxLat]`. Tapping
+  /// a marker on the native side fires [NavigationHostHandlers.onPoiTapped].
+  Future<void> showPoisOnMap({
+    required List<Map<String, dynamic>> pois,
+    required List<double> bounds,
+  });
+
+  /// Remove all POI markers and return the camera to follow-mode. Called
+  /// after a POI has been committed to the route or when the user dismisses
+  /// the POI overlay.
+  Future<void> clearPoisFromMap();
+
+  /// Tell the native host to hide the Flutter overlay container so the map
+  /// is visible again. Pair with the show-overlay path that fires when a
+  /// POI marker is tapped — without this call, the home-screen Flutter route
+  /// keeps painting over the live map after the sheet dismisses.
+  Future<void> hideOverlay();
+
   /// Register the inbound-event handlers. Native invokes these via the
   /// underlying transport (method channel) and the bridge dispatches to the
   /// matching field on [handlers]. Calling [setHandlers] again replaces the
@@ -104,6 +125,18 @@ class NavigationHostHandlers {
   /// **Native trigger:** `MapActivity.onBackPressed` when overlay visible.
   final void Function() onPopRoute;
 
+  /// Native asks Flutter to fetch POIs (or use cached ones) and push them
+  /// back down via [NavigationHostBridge.showPoisOnMap]. Carries no args.
+  /// **Native trigger:** `MapActivity.onFindStopsButtonClick` (the in-nav
+  /// "Find Stops" FAB).
+  final void Function() onRequestPoisOnMap;
+
+  /// Native reports that the user tapped a POI marker on the map. Flutter
+  /// looks the POI up by [poiId] from its cached POI response and shows the
+  /// confirmation sheet.
+  /// **Native trigger:** `MapActivity` annotation tap listener.
+  final void Function(String poiId) onPoiTapped;
+
   /// Request/response: native asks Flutter to format the next-waypoint
   /// progress card. Flutter returns `{name, distanceFormatted, etaFormatted,
   /// stopIndicator, ...}` or null when there's nothing to show (final leg).
@@ -121,6 +154,8 @@ class NavigationHostHandlers {
     required this.onDestinationArrived,
     required this.onShowOverlay,
     required this.onPopRoute,
+    required this.onRequestPoisOnMap,
+    required this.onPoiTapped,
     required this.onWaypointProgressRequest,
   });
 }
@@ -192,6 +227,27 @@ class MethodChannelNavigationHostBridge implements NavigationHostBridge {
   }
 
   @override
+  Future<void> showPoisOnMap({
+    required List<Map<String, dynamic>> pois,
+    required List<double> bounds,
+  }) async {
+    await _channel.invokeMethod('showPoisOnMap', {
+      'pois': pois,
+      'bounds': bounds,
+    });
+  }
+
+  @override
+  Future<void> clearPoisFromMap() async {
+    await _channel.invokeMethod('clearPoisFromMap');
+  }
+
+  @override
+  Future<void> hideOverlay() async {
+    await _channel.invokeMethod('hideOverlay');
+  }
+
+  @override
   void setHandlers(NavigationHostHandlers handlers) {
     _handlers = handlers;
   }
@@ -234,6 +290,15 @@ class MethodChannelNavigationHostBridge implements NavigationHostBridge {
 
       case 'popRoute':
         h.onPopRoute();
+        return null;
+
+      case 'requestPoisOnMap':
+        h.onRequestPoisOnMap();
+        return null;
+
+      case 'poiTapped':
+        final data = Map<String, dynamic>.from(call.arguments as Map);
+        h.onPoiTapped(data['poiId'] as String);
         return null;
 
       case 'calculateWaypointProgress':

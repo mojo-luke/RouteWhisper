@@ -34,6 +34,9 @@ class FakeNavigationHostBridge implements NavigationHostBridge {
   Object? updateNavigationRouteError;
   Object? cancelNavigationError;
   Object? openMapViewError;
+  Object? showPoisOnMapError;
+  Object? clearPoisFromMapError;
+  Object? hideOverlayError;
 
   NavigationHostHandlers? _handlers;
 
@@ -122,6 +125,42 @@ class FakeNavigationHostBridge implements NavigationHostBridge {
     return openMapViewResult;
   }
 
+  @override
+  Future<void> showPoisOnMap({
+    required List<Map<String, dynamic>> pois,
+    required List<double> bounds,
+  }) async {
+    sentCalls.add(RecordedCall('showPoisOnMap', {
+      'pois': pois,
+      'bounds': bounds,
+    }));
+    final err = showPoisOnMapError;
+    if (err != null) {
+      showPoisOnMapError = null;
+      throw err;
+    }
+  }
+
+  @override
+  Future<void> clearPoisFromMap() async {
+    sentCalls.add(const RecordedCall('clearPoisFromMap', <String, dynamic>{}));
+    final err = clearPoisFromMapError;
+    if (err != null) {
+      clearPoisFromMapError = null;
+      throw err;
+    }
+  }
+
+  @override
+  Future<void> hideOverlay() async {
+    sentCalls.add(const RecordedCall('hideOverlay', <String, dynamic>{}));
+    final err = hideOverlayError;
+    if (err != null) {
+      hideOverlayError = null;
+      throw err;
+    }
+  }
+
   // --- Inbound (Native → Flutter): one emit per NavigationHostHandlers field ---
   //
   // If a new handler is added to NavigationHostHandlers, add the matching
@@ -166,6 +205,14 @@ class FakeNavigationHostBridge implements NavigationHostBridge {
 
   void emitPopRoute() {
     _requireHandlers().onPopRoute();
+  }
+
+  void emitRequestPoisOnMap() {
+    _requireHandlers().onRequestPoisOnMap();
+  }
+
+  void emitPoiTapped(String poiId) {
+    _requireHandlers().onPoiTapped(poiId);
   }
 
   Map<String, dynamic>? emitWaypointProgressRequest({

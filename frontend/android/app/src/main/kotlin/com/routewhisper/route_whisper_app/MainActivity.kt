@@ -84,6 +84,9 @@ class MainActivity : FlutterActivity() {
                 "updateNavigationRoute" -> handleUpdateNavigationRoute(call, result)
                 "openMapView" -> handleOpenMapView(call, result)
                 "cancelNavigation" -> handleCancelNavigation(result)
+                "showPoisOnMap" -> handleShowPoisOnMap(call, result)
+                "clearPoisFromMap" -> handleClearPoisFromMap(result)
+                "hideOverlay" -> handleHideOverlay(result)
                 else -> result.notImplemented()
             }
         }
@@ -209,6 +212,35 @@ class MainActivity : FlutterActivity() {
         startActivity(intent)
 
         result.success("Map view opened")
+    }
+
+    private fun handleShowPoisOnMap(call: MethodCall, result: MethodChannel.Result) {
+        val poisRaw = call.argument<List<Map<String, Any>>>("pois")
+        val bounds = call.argument<List<Double>>("bounds")
+        if (poisRaw == null || bounds == null || bounds.size != 4) {
+            result.error("INVALID_ARGS", "Missing pois or bounds", null)
+            return
+        }
+
+        val map = MapActivity.currentInstance
+        if (map == null) {
+            Log.e("MainActivity", "showPoisOnMap: no active MapActivity")
+            result.error("NO_ACTIVITY", "MapActivity not active", null)
+            return
+        }
+
+        map.showPoisOnMap(poisRaw, bounds)
+        result.success(null)
+    }
+
+    private fun handleClearPoisFromMap(result: MethodChannel.Result) {
+        MapActivity.currentInstance?.clearPoisFromMap()
+        result.success(null)
+    }
+
+    private fun handleHideOverlay(result: MethodChannel.Result) {
+        MapActivity.currentInstance?.hideFlutterOverlay()
+        result.success(null)
     }
 
     override fun onPause() {

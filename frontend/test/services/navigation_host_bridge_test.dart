@@ -93,6 +93,32 @@ void main() {
       expect(outboundCalls.single.method, 'openMapView');
     });
 
+    test('showPoisOnMap sends correct method and payload', () async {
+      await bridge.showPoisOnMap(
+        pois: [
+          {'id': 'p1', 'lat': 37.7, 'lng': -122.4, 'category': 'restaurant'},
+        ],
+        bounds: [-122.5, 37.6, -122.3, 37.8],
+      );
+      expect(outboundCalls.single.method, 'showPoisOnMap');
+      expect(outboundCalls.single.arguments, {
+        'pois': [
+          {'id': 'p1', 'lat': 37.7, 'lng': -122.4, 'category': 'restaurant'},
+        ],
+        'bounds': [-122.5, 37.6, -122.3, 37.8],
+      });
+    });
+
+    test('clearPoisFromMap sends correct method', () async {
+      await bridge.clearPoisFromMap();
+      expect(outboundCalls.single.method, 'clearPoisFromMap');
+    });
+
+    test('hideOverlay sends correct method', () async {
+      await bridge.hideOverlay();
+      expect(outboundCalls.single.method, 'hideOverlay');
+    });
+
     // --- Inbound (Native → Flutter) ---
 
     test('inbound dispatch routes every documented event', () async {
@@ -115,6 +141,8 @@ void main() {
         onDestinationArrived: () => received['destinationArrived'] = true,
         onShowOverlay: (route) => received['showOverlay'] = route,
         onPopRoute: () => received['popRoute'] = true,
+        onRequestPoisOnMap: () => received['requestPoisOnMap'] = true,
+        onPoiTapped: (poiId) => received['poiTapped'] = poiId,
         onWaypointProgressRequest: ({
           required legIndex,
           required distanceMeters,
@@ -167,6 +195,12 @@ void main() {
       await simulateNative('popRoute', null);
       expect(received['popRoute'], true);
 
+      await simulateNative('requestPoisOnMap', null);
+      expect(received['requestPoisOnMap'], true);
+
+      await simulateNative('poiTapped', {'poiId': 'poi_42'});
+      expect(received['poiTapped'], 'poi_42');
+
       final progress = await simulateNative('calculateWaypointProgress', {
         'legIndex': 0,
         'distanceMeters': 1000.0,
@@ -209,6 +243,8 @@ NavigationHostHandlers _throwingHandlers() => NavigationHostHandlers(
       onDestinationArrived: () => throw StateError('should not fire'),
       onShowOverlay: (_) => throw StateError('should not fire'),
       onPopRoute: () => throw StateError('should not fire'),
+      onRequestPoisOnMap: () => throw StateError('should not fire'),
+      onPoiTapped: (_) => throw StateError('should not fire'),
       onWaypointProgressRequest: ({
         required legIndex,
         required distanceMeters,
