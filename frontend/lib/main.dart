@@ -3,8 +3,10 @@ import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'screens/navigation_dashboard.dart';
 import 'services/navigation_service.dart';
+import 'services/recommendation_service.dart';
 import 'widgets/auth_gate.dart';
 import 'widgets/poi_dashboard.dart';
+import 'widgets/recommendation_overlay.dart';
 
 // Global navigator key for navigation from services
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
@@ -45,6 +47,12 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider.value(
           value: NavigationService.controller,
         ),
+
+        // Recommendation service polls during nav and exposes the next
+        // suggestion to surface.
+        ChangeNotifierProvider(
+          create: (_) => RecommendationService(),
+        ),
       ],
       child: MaterialApp(
         navigatorKey: navigatorKey,
@@ -64,6 +72,9 @@ class MyApp extends StatelessWidget {
           '/': (context) => const AuthGate(signedIn: NavigationDashboard()),
           '/poi-discovery': (context) => const POIDashboard(),
         },
+        // Wrap every route in an overlay that pushes a transparent
+        // bottom-aligned recommendation card whenever a suggestion appears.
+        builder: (context, child) => RecommendationOverlay(child: child),
         debugShowCheckedModeBanner: false,
       ),
     );

@@ -36,6 +36,9 @@ from app.database import (
     WaypointStopHistoryDoc,
 )
 
+# Recommendations
+from app.services.stop_recommendations import rank_suggestions
+
 # Global Redis client
 redis_client = None
 
@@ -550,10 +553,121 @@ async def get_poi_facts():
     """Get facts for specific POI - TODO: Implement in Step 4"""
     return {"message": "POI facts endpoint - Coming in Step 4"}
 
-@app.get("/api/v1/recommendations/stops")
-async def get_stop_recommendations():
-    """Get stop recommendations along route - TODO: Implement in Step 7"""
-    return {"message": "Stop recommendations endpoint - Coming in Step 7"}
+class StopRecommendationsRequest(BaseModel):
+    encoded_polyline: str
+    remaining_budget_minutes: Optional[int] = None
+    categories: Optional[list[POICategory]] = None
+    corridor_radius_miles: float = 5.0
+
+
+@app.post("/api/v1/recommendations/stops")
+async def get_stop_recommendations(
+    request: StopRecommendationsRequest,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Proactive stop suggestions during navigation.
+
+    Pipeline:
+      1. Reuse the POI discovery flow (cache + Mapbox + ranking) restricted
+         to the user's preferred categories (or supplied filter).
+      2. Pull the caller's stop-history aggregates from MongoDB.
+      3. Score each candidate via `rank_suggestions` using profile + history
+         + remaining budget + current time-of-day.
+      4. Return top 1–3 with a reason string for each.
+    """
+    profile = await UserProfile.find_one(UserProfile.user_id == user.id)
+    preferred = profile.preferred_poi_types if profile else []
+
+    # Filter categories: explicit > profile preferences > sensible defaults.
+    if request.categories:
+        categories = request.categories
+    elif preferred:
+        categories = [POICategory(c) for c in preferred if c in POICategory._value2member_map_]
+    else:
+        categories = [
+            POICategory.GAS_STATION,
+            POICategory.RESTAURANT,
+            POICategory.COFFEE,
+            POICategory.SCENIC,
+        ]
+    if not categories:
+        return {"suggestions": []}
+
+    # Step 1: candidate POIs along the route. Mirrors discover_route_pois
+    # without the cache layer — recommendations are personalized and
+    # don't share a useful cache key across users.
+    route_points = decode_polyline(request.encoded_polyline)
+    if not route_points:
+        return {"suggestions": []}
+    mid_idx = len(route_points) // 2
+    proximity = route_points[mid_idx]
+    bounds = calculate_bounds(route_points)
+    mapbox_service = MapboxSearchService()
+    try:
+        pois = await mapbox_service.search_multiple_categories(
+            categories=categories,
+            proximity=proximity,
+            bbox=bounds,
+            limit_per_category=3,
+        )
+    finally:
+        await mapbox_service.close()
+    pois = POIRankingService.filter_and_rank(
+        pois=pois,
+        route_points=route_points,
+        max_results=20,
+        distribute=True,
+    )
+
+    # Step 2: history aggregates (small two-query fan-out).
+    cat_avg_rows = await WaypointStopHistoryDoc.aggregate(
+        [
+            {"$match": {"user_id": user.id, "waypoint_category": {"$ne": None}}},
+            {
+                "$group": {
+                    "_id": "$waypoint_category",
+                    "count": {"$sum": 1},
+                    "avg_actual_minutes": {"$avg": "$actual_duration_minutes"},
+                }
+            },
+        ]
+    ).to_list()
+    category_averages = {
+        r["_id"]: {
+            "count": r["count"],
+            "avg_actual_minutes": r["avg_actual_minutes"] or 0,
+        }
+        for r in cat_avg_rows
+    }
+    hour_rows = await WaypointStopHistoryDoc.aggregate(
+        [
+            {"$match": {"user_id": user.id, "hour_of_day": {"$ne": None}}},
+            {"$group": {"_id": "$hour_of_day", "count": {"$sum": 1}}},
+        ]
+    ).to_list()
+    by_hour = [{"hour": r["_id"], "count": r["count"]} for r in hour_rows]
+
+    # Step 3: score.
+    ranked = rank_suggestions(
+        pois,
+        preferred_categories=preferred,
+        category_averages=category_averages,
+        by_hour=by_hour,
+        remaining_budget_minutes=request.remaining_budget_minutes,
+        now=datetime.utcnow(),
+        limit=3,
+    )
+
+    return {
+        "suggestions": [
+            {
+                "poi": s.poi.model_dump(mode="json"),
+                "score": round(s.score, 3),
+                "reason": s.reason,
+            }
+            for s in ranked
+        ]
+    }
 
 @app.get("/api/v1/collaboration/status")
 async def get_collaboration_status():
