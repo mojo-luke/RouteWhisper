@@ -13,10 +13,39 @@ import 'package:frontend/models/waypoint.dart';
 class WaypointManager extends ChangeNotifier {
   List<Waypoint> _waypoints = [];
 
+  /// Per-trip slack budget in minutes — minutes of stop time the user has
+  /// beyond raw drive time. Seeded from `UserProfile.defaultTimeBudgetMinutes`
+  /// at trip start (caller's responsibility); null means "no budget set,
+  /// don't show budget UI".
+  int? _tripBudgetMinutes;
+
   WaypointManager();
 
   /// Get all waypoints in order
   List<Waypoint> getWaypoints() => List.unmodifiable(_waypoints);
+
+  // --- Budget ---
+
+  int? get tripBudgetMinutes => _tripBudgetMinutes;
+
+  /// Total minutes the user has *planned* to spend stopped — sum of
+  /// `estimatedDurationMinutes` across intermediate waypoints. Origin and
+  /// destination contribute zero by construction.
+  int get usedBudgetMinutes => _waypoints
+      .where((w) =>
+          w.type != WaypointType.origin && w.type != WaypointType.destination)
+      .fold<int>(0, (sum, w) => sum + w.estimatedDurationMinutes);
+
+  /// Slack remaining. Negative when over budget; null when no budget is set.
+  int? get remainingBudgetMinutes =>
+      _tripBudgetMinutes == null ? null : _tripBudgetMinutes! - usedBudgetMinutes;
+
+  /// Set or clear the per-trip slack budget. Pass null to hide the budget UI.
+  void setTripBudget(int? minutes) {
+    if (_tripBudgetMinutes == minutes) return;
+    _tripBudgetMinutes = minutes;
+    _notifyListeners();
+  }
 
   /// Get waypoint by ID
   Waypoint? getWaypointById(String id) {

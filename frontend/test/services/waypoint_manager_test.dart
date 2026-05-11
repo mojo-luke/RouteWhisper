@@ -613,5 +613,85 @@ void main() {
         expect(progressData!['etaMinutes'], 3);
       });
     });
+
+    group('Budget', () {
+      test('budget starts unset and exposes null totals', () {
+        expect(manager.tripBudgetMinutes, isNull);
+        expect(manager.remainingBudgetMinutes, isNull);
+        expect(manager.usedBudgetMinutes, 0);
+      });
+
+      test('setTripBudget exposes the value and notifies listeners', () {
+        var notified = 0;
+        manager.addListener(() => notified++);
+
+        manager.setTripBudget(60);
+
+        expect(manager.tripBudgetMinutes, 60);
+        expect(manager.remainingBudgetMinutes, 60);
+        expect(notified, 1);
+      });
+
+      test('setting the same budget value is a no-op', () {
+        manager.setTripBudget(60);
+        var notified = 0;
+        manager.addListener(() => notified++);
+
+        manager.setTripBudget(60);
+
+        expect(notified, 0);
+      });
+
+      test('used = sum of intermediate waypoint durations', () {
+        manager.setOrigin(latitude: 0, longitude: 0);
+        manager.setDestination(latitude: 1, longitude: 1);
+        manager.setTripBudget(60);
+
+        manager.addWaypoint(Waypoint.manual(
+          name: 'Stop A',
+          latitude: 0.5,
+          longitude: 0.5,
+          order: 0,
+          estimatedDurationMinutes: 20,
+        ));
+        manager.addWaypoint(Waypoint.manual(
+          name: 'Stop B',
+          latitude: 0.7,
+          longitude: 0.7,
+          order: 0,
+          estimatedDurationMinutes: 15,
+        ));
+
+        expect(manager.usedBudgetMinutes, 35);
+        expect(manager.remainingBudgetMinutes, 25);
+      });
+
+      test('remaining goes negative when over budget', () {
+        manager.setTripBudget(30);
+        manager.addWaypoint(Waypoint.manual(
+          name: 'Long stop',
+          latitude: 0,
+          longitude: 0,
+          order: 0,
+          estimatedDurationMinutes: 50,
+        ));
+        expect(manager.remainingBudgetMinutes, -20);
+      });
+
+      test('origin and destination do not contribute to used', () {
+        manager.setOrigin(latitude: 0, longitude: 0);
+        manager.setDestination(latitude: 1, longitude: 1);
+        manager.setTripBudget(60);
+        expect(manager.usedBudgetMinutes, 0);
+      });
+
+      test('setTripBudget(null) clears the budget back to unset', () {
+        manager.setTripBudget(60);
+        manager.setTripBudget(null);
+
+        expect(manager.tripBudgetMinutes, isNull);
+        expect(manager.remainingBudgetMinutes, isNull);
+      });
+    });
   });
 }

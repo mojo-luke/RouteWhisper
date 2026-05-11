@@ -92,7 +92,9 @@ class POIConfirmationSheet extends StatelessWidget {
                 style: const TextStyle(color: Colors.white60, fontSize: 13),
               ),
             ],
-            const SizedBox(height: 24),
+            const SizedBox(height: 12),
+            _BudgetImpact(poi: poi),
+            const SizedBox(height: 16),
             Row(
               children: [
                 Expanded(
@@ -221,6 +223,38 @@ class _Chip extends StatelessWidget {
             style: const TextStyle(color: Colors.white, fontSize: 12),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Single line of "Adds X min — Y min slack remaining after stop" shown
+/// above the action buttons. Renders nothing when no budget is set on the
+/// current trip.
+class _BudgetImpact extends StatelessWidget {
+  final POI poi;
+  const _BudgetImpact({required this.poi});
+
+  @override
+  Widget build(BuildContext context) {
+    final manager = NavigationService.waypointManager;
+    final budget = manager.tripBudgetMinutes;
+    if (budget == null) return const SizedBox.shrink();
+
+    // Use the default duration the waypoint factory would assign for this
+    // category, so the preview matches what actually gets added.
+    final adds = Waypoint.fromPOI(poi, 0).estimatedDurationMinutes;
+    final remainingAfter = budget - manager.usedBudgetMinutes - adds;
+    final overBudget = remainingAfter < 0;
+
+    return Text(
+      overBudget
+          ? 'Adds $adds min — ${-remainingAfter} min over budget'
+          : 'Adds $adds min — $remainingAfter min slack remaining',
+      style: TextStyle(
+        color: overBudget ? const Color(0xFFFF8585) : Colors.white60,
+        fontSize: 12,
+        fontWeight: overBudget ? FontWeight.w600 : FontWeight.normal,
       ),
     );
   }

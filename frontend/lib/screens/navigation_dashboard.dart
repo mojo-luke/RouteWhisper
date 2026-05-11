@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'preferences_screen.dart';
 import '../services/navigation_service.dart';
+import '../services/user_profile_service.dart';
+import '../widgets/budget_pill.dart';
 import '../widgets/route_input_dialog.dart';
 import '../widgets/poi_dashboard.dart';
 import '../widgets/waypoint_list.dart';
@@ -26,6 +28,18 @@ class _NavigationDashboardState extends State<NavigationDashboard> {
     NavigationService.initialize();
     // Navigation state, waypoints, and route polyline come from Provider — widgets
     // rebuild automatically when state changes.
+    _hydrateBudgetFromProfile();
+  }
+
+  /// Seed WaypointManager.tripBudgetMinutes from the signed-in user's
+  /// profile so the BudgetPill renders something on first paint. Best-effort:
+  /// no UI block on failure — the pill just stays hidden if profile fetch
+  /// fails.
+  Future<void> _hydrateBudgetFromProfile() async {
+    final profile = await UserProfileService.fetch();
+    if (!mounted || profile == null) return;
+    NavigationService.waypointManager
+        .setTripBudget(profile.defaultTimeBudgetMinutes);
   }
 
   @override
@@ -84,14 +98,22 @@ class _NavigationDashboardState extends State<NavigationDashboard> {
         elevation: 0,
         centerTitle: true,
         actions: [
+          const Padding(
+            padding: EdgeInsets.only(right: 4),
+            child: Center(child: BudgetPill()),
+          ),
           IconButton(
             icon: const Icon(Icons.tune, color: Colors.white),
             tooltip: 'Preferences',
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => const PreferencesScreen(),
-              ),
-            ),
+            onPressed: () async {
+              await Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const PreferencesScreen(),
+                ),
+              );
+              // Pull in any budget edit the user just made.
+              _hydrateBudgetFromProfile();
+            },
           ),
         ],
       ),
