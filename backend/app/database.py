@@ -157,10 +157,14 @@ class POIContent(Document):
     
     class Settings:
         name = "poi_content"
+        # NOTE: the previous compound geo index (`latitude`, `longitude` both
+        # GEO2D) was rejected by MongoDB ("can't have 2 geo fields") and
+        # prevented the whole app from starting once init_mongodb() began
+        # running on boot. When POIContent is actually used (Step 4 narration),
+        # add a single 2dsphere index on a proper GeoJSON `location` field.
         indexes = [
-            [("latitude", pymongo.GEO2D), ("longitude", pymongo.GEO2D)],
             "category",
-            "poi_id"
+            "poi_id",
         ]
 
 class TripCollaboration(Document):

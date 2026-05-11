@@ -20,6 +20,8 @@ Thumbs.db
 .env.*.local
 *.log
 logs/
+secrets/
+client_secret_*.json
 
 # Backend (Python/FastAPI)
 backend/__pycache__/
