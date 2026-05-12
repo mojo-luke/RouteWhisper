@@ -40,6 +40,84 @@ class _CategoryOption {
   const _CategoryOption(this.key, this.label, this.emoji);
 }
 
+/// Curated suggestion for the "Specific interests" section. Each entry
+/// maps to a label the user sees plus the scorer's matching primitives:
+/// Mapbox categories (used for the search fan-out + scorer category-hit
+/// check) and keywords (matched against `poi.name` so we catch POIs the
+/// category alone doesn't bucket cleanly — e.g. "Sunset Vineyards" under
+/// `restaurant`).
+///
+/// Every `mapboxCategories` entry MUST be a value in the backend's
+/// POICategory enum until the engine learns to fan out to richer
+/// subcategories. Until then, keywords carry the specificity. See
+/// docs/recommendations-brief.md → "Personalization vocabulary".
+class _CuratedInterest {
+  final String label;
+  final String emoji;
+  final List<String> mapboxCategories;
+  final List<String> keywords;
+  const _CuratedInterest(
+    this.label,
+    this.emoji, {
+    required this.mapboxCategories,
+    this.keywords = const [],
+  });
+}
+
+const _curatedInterests = <_CuratedInterest>[
+  _CuratedInterest('Local diners', '🍳',
+      mapboxCategories: ['restaurant'],
+      keywords: ['diner', 'café', 'kitchen']),
+  _CuratedInterest('Specialty coffee', '☕',
+      mapboxCategories: ['coffee'],
+      keywords: ['roaster', 'espresso']),
+  _CuratedInterest('Wineries', '🍷',
+      mapboxCategories: ['restaurant', 'attraction'],
+      keywords: ['winery', 'vineyard', 'estate']),
+  _CuratedInterest('Craft breweries', '🍺',
+      mapboxCategories: ['restaurant'],
+      keywords: ['brewery', 'taproom', 'brewing']),
+  _CuratedInterest('Scenic overlooks', '🏞️',
+      mapboxCategories: ['scenic'],
+      keywords: ['overlook', 'viewpoint', 'vista']),
+  _CuratedInterest('State parks', '🌲',
+      mapboxCategories: ['park'],
+      keywords: ['state park', 'state forest']),
+  _CuratedInterest('Hiking trails', '🥾',
+      mapboxCategories: ['park', 'scenic'],
+      keywords: ['trail', 'trailhead']),
+  _CuratedInterest('Beaches', '🏖️',
+      mapboxCategories: ['scenic'],
+      keywords: ['beach']),
+  _CuratedInterest('Antique shops', '🪑',
+      mapboxCategories: ['shopping'],
+      keywords: ['antique', 'vintage']),
+  _CuratedInterest('Bookstores', '📚',
+      mapboxCategories: ['shopping'],
+      keywords: ['bookstore', 'books']),
+  _CuratedInterest('Record stores', '💿',
+      mapboxCategories: ['shopping'],
+      keywords: ['record', 'vinyl']),
+  _CuratedInterest('Farmers markets', '🥕',
+      mapboxCategories: ['grocery', 'shopping'],
+      keywords: ['farmers market', "farmer's market"]),
+  _CuratedInterest('Ice cream', '🍦',
+      mapboxCategories: ['restaurant'],
+      keywords: ['ice cream', 'creamery', 'gelato']),
+  _CuratedInterest('BBQ', '🔥',
+      mapboxCategories: ['restaurant'],
+      keywords: ['bbq', 'barbecue', 'smokehouse']),
+  _CuratedInterest('Boutique hotels', '🛏️',
+      mapboxCategories: ['hotel'],
+      keywords: ['boutique', 'inn']),
+  _CuratedInterest('Campgrounds', '⛺',
+      mapboxCategories: ['camping'],
+      keywords: []),
+  _CuratedInterest('EV charging', '🔌',
+      mapboxCategories: ['gas_station'],
+      keywords: ['charging', 'supercharger', 'evgo', 'chargepoint']),
+];
+
 class _PreferencesScreenState extends State<PreferencesScreen> {
   bool _loading = true;
   bool _saving = false;
@@ -111,6 +189,46 @@ class _PreferencesScreenState extends State<PreferencesScreen> {
     ));
   }
 
+  bool _hasInterestLabel(String label) =>
+      _profile.interests.any((i) => i.label.toLowerCase() == label.toLowerCase());
+
+  void _toggleCuratedInterest(_CuratedInterest curated) {
+    final current = List<UserInterest>.from(_profile.interests);
+    final existingIndex = current.indexWhere(
+      (i) => i.label.toLowerCase() == curated.label.toLowerCase(),
+    );
+    if (existingIndex >= 0) {
+      current.removeAt(existingIndex);
+    } else {
+      current.add(UserInterest(
+        label: curated.label,
+        mapboxCategories: curated.mapboxCategories,
+        keywords: curated.keywords,
+      ));
+    }
+    _save(_profile.copyWith(interests: current));
+  }
+
+  void _addCustomInterest(String label) {
+    final trimmed = label.trim();
+    if (trimmed.isEmpty) return;
+    if (_hasInterestLabel(trimmed)) return; // dedupe by label
+    final current = List<UserInterest>.from(_profile.interests);
+    // Free-text entries start with empty mapboxCategories/keywords. The
+    // backend's LLM-normalization step (Task #7) populates them at save
+    // time; until that lands, these only contribute weight when their
+    // label happens to match a POI name verbatim (unlikely).
+    current.add(UserInterest(label: trimmed));
+    _save(_profile.copyWith(interests: current));
+  }
+
+  void _removeInterest(UserInterest interest) {
+    final current = _profile.interests
+        .where((i) => i.label != interest.label)
+        .toList();
+    _save(_profile.copyWith(interests: current));
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -147,6 +265,20 @@ class _PreferencesScreenState extends State<PreferencesScreen> {
                       onSelected: _saving ? null : (_) => _toggleCategory(opt.key),
                     );
                   }).toList(),
+                ),
+                const SizedBox(height: 32),
+                _SectionHeader(
+                  title: 'Specific interests',
+                  subtitle:
+                      'More specific than categories — these carry the heaviest weight in suggestions.',
+                ),
+                _InterestsSection(
+                  selected: _profile.interests,
+                  curated: _curatedInterests,
+                  saving: _saving,
+                  onToggleCurated: _toggleCuratedInterest,
+                  onAddCustom: _addCustomInterest,
+                  onRemove: _removeInterest,
                 ),
                 const SizedBox(height: 32),
                 _SectionHeader(
@@ -343,6 +475,139 @@ class _BudgetSlider extends StatelessWidget {
             minutes == null ? 'No default' : '${minutes!} min of slack per trip',
             style: Theme.of(context).textTheme.bodySmall,
           ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Composite widget for the "Specific interests" section. Three rows:
+///   1. Currently-selected interests as removable chips (only when non-empty)
+///   2. Curated suggestion chips (tap to toggle)
+///   3. A text field + "Add" button for custom (free-text) interests
+class _InterestsSection extends StatefulWidget {
+  final List<UserInterest> selected;
+  final List<_CuratedInterest> curated;
+  final bool saving;
+  final void Function(_CuratedInterest) onToggleCurated;
+  final void Function(String) onAddCustom;
+  final void Function(UserInterest) onRemove;
+
+  const _InterestsSection({
+    required this.selected,
+    required this.curated,
+    required this.saving,
+    required this.onToggleCurated,
+    required this.onAddCustom,
+    required this.onRemove,
+  });
+
+  @override
+  State<_InterestsSection> createState() => _InterestsSectionState();
+}
+
+class _InterestsSectionState extends State<_InterestsSection> {
+  final _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submitCustom() {
+    final text = _controller.text;
+    if (text.trim().isEmpty) return;
+    widget.onAddCustom(text);
+    _controller.clear();
+  }
+
+  bool _isCuratedSelected(_CuratedInterest c) =>
+      widget.selected.any((i) => i.label.toLowerCase() == c.label.toLowerCase());
+
+  /// Match a selected interest back to its curated definition (if any)
+  /// so the "selected" chip can show the same emoji the suggestion did.
+  /// Returns null for free-text entries.
+  _CuratedInterest? _curatedFor(UserInterest interest) {
+    for (final c in widget.curated) {
+      if (c.label.toLowerCase() == interest.label.toLowerCase()) return c;
+    }
+    return null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (widget.selected.isNotEmpty) ...[
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: widget.selected.map((interest) {
+              final curated = _curatedFor(interest);
+              final emoji = curated?.emoji ?? '✨';
+              return InputChip(
+                avatar: Text(emoji, style: const TextStyle(fontSize: 14)),
+                label: Text(interest.label),
+                onDeleted: widget.saving ? null : () => widget.onRemove(interest),
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 12),
+          const Divider(),
+          const SizedBox(height: 12),
+        ],
+        Text(
+          'Suggestions',
+          style: Theme.of(context)
+              .textTheme
+              .labelMedium
+              ?.copyWith(color: Colors.white60),
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: widget.curated.map((c) {
+            final selected = _isCuratedSelected(c);
+            return FilterChip(
+              label: Text('${c.emoji} ${c.label}'),
+              selected: selected,
+              onSelected:
+                  widget.saving ? null : (_) => widget.onToggleCurated(c),
+            );
+          }).toList(),
+        ),
+        const SizedBox(height: 16),
+        Text(
+          'Add your own',
+          style: Theme.of(context)
+              .textTheme
+              .labelMedium
+              ?.copyWith(color: Colors.white60),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _controller,
+                enabled: !widget.saving,
+                decoration: const InputDecoration(
+                  hintText: 'e.g. small wineries, lakes to fish',
+                  isDense: true,
+                  border: OutlineInputBorder(),
+                ),
+                onSubmitted: (_) => _submitCustom(),
+              ),
+            ),
+            const SizedBox(width: 8),
+            FilledButton(
+              onPressed: widget.saving ? null : _submitCustom,
+              child: const Text('Add'),
+            ),
+          ],
         ),
       ],
     );
