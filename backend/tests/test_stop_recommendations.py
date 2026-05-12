@@ -125,10 +125,12 @@ class TestModerateMode:
         )
         assert result == []
 
-    def test_filters_detour_over_2mi(self):
+    def test_filters_detour_over_cap(self):
+        # Moderate detour cap is 3.0mi (calibrated 2026-05-12). A POI
+        # well past that should drop.
         result = rank_suggestions(
             [_poi(category="restaurant", rating=4.5,
-                  distance_from_route_miles=2.5)],
+                  distance_from_route_miles=5.0)],
             mode=TimeBudgetMode.MODERATE,
             invocation=Invocation.MANUAL,
         )

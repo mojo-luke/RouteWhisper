@@ -695,14 +695,14 @@ async def get_stop_recommendations(
             categories=categories,
             proximity=proximity,
             bbox=bounds,
-            limit_per_category=3,
+            limit_per_category=10,  # 3 was too few; scorer needs a pool
         )
     finally:
         await mapbox_service.close()
     pois = POIRankingService.filter_and_rank(
         pois=pois,
         route_points=route_points,
-        max_results=20,
+        max_results=30,  # 20 was too tight for the engine's hard filters
         distribute=True,
     )
 

@@ -67,25 +67,30 @@ class ModeThresholds:
     min_score: float               # Score floor for a candidate to surface
 
 
+# Thresholds calibrated against real Mapbox data 2026-05-12. The brief's
+# "moderate ≤30 min stop / ≤2 mi detour" filtered out essentially every
+# restaurant Mapbox returns (default duration 75 min for sit-down meals),
+# yielding zero suggestions in practice. These are looser values that
+# still differentiate the three modes but pass realistic POI data through.
 _THRESHOLDS: dict[TimeBudgetMode, ModeThresholds] = {
     TimeBudgetMode.HURRY: ModeThresholds(
         rating_floor=4.5,
-        max_stop_minutes=15,
+        max_stop_minutes=20,         # ↑ 15 → 20 (gas + quick coffee)
         max_detour_miles=0.5,
         practical_only=True,
         min_score=0.30,
     ),
     TimeBudgetMode.MODERATE: ModeThresholds(
         rating_floor=4.0,
-        max_stop_minutes=30,
-        max_detour_miles=2.0,
+        max_stop_minutes=90,         # ↑ 30 → 90 (sit-down meal fits)
+        max_detour_miles=3.0,        # ↑ 2.0 → 3.0
         practical_only=False,
         min_score=0.15,
     ),
     TimeBudgetMode.DISCOVERY: ModeThresholds(
         rating_floor=3.5,
-        max_stop_minutes=90,
-        max_detour_miles=5.0,
+        max_stop_minutes=180,        # ↑ 90 → 180 (museum visit fits)
+        max_detour_miles=8.0,        # ↑ 5.0 → 8.0
         practical_only=False,
         min_score=0.05,
     ),
@@ -106,6 +111,45 @@ _OVERDUE_HOURS = 2.5
 # Categories considered "novel" for discovery-mode bonus. Currently the
 # delight-leaning subset of Mapbox categories.
 _NOVEL = {"scenic", "attraction", "museum", "park"}
+
+# Friendlier display names for categories — avoids "you like campings" /
+# "you like coffees" pluralization bugs. Used in reason phrasing.
+_CATEGORY_DISPLAY = {
+    "gas_station": "gas stations",
+    "restaurant": "restaurants",
+    "coffee": "coffee shops",
+    "hotel": "hotels",
+    "camping": "campgrounds",
+    "attraction": "attractions",
+    "shopping": "shops",
+    "scenic": "scenic stops",
+    "museum": "museums",
+    "park": "parks",
+    "hospital": "hospitals",
+    "pharmacy": "pharmacies",
+    "bank": "banks",
+    "grocery": "grocery stops",
+}
+
+
+def _category_label(category: str) -> str:
+    return _CATEGORY_DISPLAY.get(category, category.replace("_", " ") + "s")
+
+
+def _format_metadata(poi: POI) -> str:
+    """Build the inline decision-critical strip appended to every reason.
+
+    Returns the parts the user needs to glance-decide whether the detour
+    is worth it: rating, off-route distance, expected stop length. Skips
+    fields we don't have rather than printing 'rating: None'.
+    """
+    parts: list[str] = []
+    if poi.rating is not None:
+        parts.append(f"★ {poi.rating:.1f}")
+    parts.append(f"{poi.distance_from_route_miles:.1f} mi off-route")
+    if poi.estimated_duration_minutes:
+        parts.append(f"~{poi.estimated_duration_minutes} min stop")
+    return " · ".join(parts)
 
 
 # =============================================================================
@@ -276,7 +320,7 @@ def score_poi(
     if poi.category in set(profile_categories or []):
         score += _W_CATEGORY_MATCH
         reasons.append(
-            (_W_CATEGORY_MATCH, f"You like {poi.category.replace('_', ' ')}s")
+            (_W_CATEGORY_MATCH, f"You like {_category_label(poi.category)}")
         )
         debug.append(f"+{_W_CATEGORY_MATCH:.2f} preferred category ({poi.category})")
 
@@ -288,8 +332,7 @@ def score_poi(
         reasons.append(
             (
                 _W_HISTORY_FAMILIAR,
-                f"You usually stay {avg_mins} min at "
-                f"{poi.category.replace('_', ' ')}s",
+                f"You usually stay {avg_mins} min at {_category_label(poi.category)}",
             )
         )
         debug.append(
@@ -326,7 +369,8 @@ def score_poi(
     if mode == TimeBudgetMode.DISCOVERY and poi.category in _NOVEL:
         score += _W_NOVEL_IN_DISCOVERY
         reasons.append(
-            (_W_NOVEL_IN_DISCOVERY, f"Something to explore: {poi.category.replace('_', ' ')}")
+            (_W_NOVEL_IN_DISCOVERY,
+             f"Something to explore — {_category_label(poi.category)[:-1]}")
         )
         debug.append(f"+{_W_NOVEL_IN_DISCOVERY:.2f} novel-in-discovery ({poi.category})")
 
@@ -343,9 +387,14 @@ def score_poi(
 
     if reasons:
         reasons.sort(key=lambda r: -r[0])
-        reason = reasons[0][1]
+        headline = reasons[0][1]
     else:
-        reason = "Suggested stop along your route"
+        headline = "Suggested stop along your route"
+
+    # Always append the decision-critical metadata strip — rating,
+    # off-route distance, expected stop length. This is what the user
+    # needs to glance-decide whether the detour is worth it.
+    reason = f"{headline} · {_format_metadata(poi)}"
 
     return ScoredPOI(poi=poi, score=score, reason=reason, reasons=debug)
 
