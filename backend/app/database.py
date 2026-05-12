@@ -273,6 +273,67 @@ class UserProfile(Document):
             [("user_id", 1)],  # unique enforced at app layer to keep schema simple
         ]
 
+
+class Trip(Document):
+    """A user-planned road trip. See docs/trip-planning-brief.md.
+
+    Slice A (this commit) stores the trip skeleton: origin, destination,
+    dates, constraints, and empty `pins` / `days` arrays that future
+    slices populate. The fields are intentionally permissive
+    (list = []) so the canvas work can evolve the pin/day shape without
+    a schema migration.
+
+    Pin shape (filled in slice C):
+        {type: "anchor" | "suggested" | "lodging" | "wing_it",
+         poi: {...}, day_index: int?, time_of_day: str?}
+
+    Day shape (filled in slice D):
+        {day_number: int, drive_time_minutes: int,
+         distance_miles: float, lodging_pin_id: str?}
+    """
+
+    user_id: str
+    name: str
+
+    # Endpoints — minimum required to plan anything.
+    origin_name: str
+    origin_lat: float
+    origin_lng: float
+    destination_name: str
+    destination_lat: float
+    destination_lng: float
+
+    # Date range. `start_date` / `end_date` are ISO strings; we store as
+    # strings rather than datetimes because "anytime in October" is a
+    # legitimate value that doesn't decompose cleanly into a single date.
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    arrival_time: Optional[str] = None  # "16:00" style; null = no constraint
+
+    # Constraints layered onto the trip. Default daily cap matches the
+    # brief's "6 hr / 350 mi" rule of thumb.
+    daily_drive_cap_hours: int = 6
+    time_budget_mode: str = "moderate"  # hurry | moderate | discovery
+
+    # Canvas state — empty until slice C/D fills these in.
+    pins: list = []
+    days: list = []
+
+    # Optional free-form notes the user might attach. Useful surface for
+    # "I already booked the first hotel — confirmation # XYZ".
+    notes: Optional[str] = None
+
+    created_at: datetime = datetime.utcnow()
+    updated_at: datetime = datetime.utcnow()
+
+    class Settings:
+        name = "trips"
+        indexes = [
+            "user_id",
+            [("user_id", 1), ("updated_at", -1)],  # list-most-recent query
+        ]
+
+
 # =============================================================================
 # Redis Setup (Caching & Sessions)
 # =============================================================================
@@ -306,6 +367,7 @@ async def init_mongodb():
             CachedAPIResponse,
             WaypointStopHistoryDoc,
             UserProfile,
+            Trip,
         ],
     )
 

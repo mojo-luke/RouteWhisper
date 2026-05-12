@@ -37,6 +37,7 @@ from app.utils.polyline import (
 from app.auth import CurrentUser, get_current_user
 from app.database import (
     init_mongodb,
+    Trip,
     UserProfile,
     WaypointStopHistoryDoc,
 )
@@ -585,6 +586,159 @@ async def update_user_profile(
     p.updated_at = datetime.utcnow()
     await p.save()
     return payload
+
+# =============================================================================
+# Trips — pre-trip planning persistence. See docs/trip-planning-brief.md.
+# This slice (A) ships the skeleton: create, list, read, update, delete.
+# Slices B+ add the wizard UX, canvas rendering, multi-day breaks, and
+# lodging integration on top of this storage layer.
+# =============================================================================
+
+
+class TripPayload(BaseModel):
+    """Wire shape for Trip create/read/update. The optional `id` is
+    server-assigned and omitted on POST (create)."""
+    id: Optional[str] = None
+    name: str
+    origin_name: str
+    origin_lat: float
+    origin_lng: float
+    destination_name: str
+    destination_lat: float
+    destination_lng: float
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    arrival_time: Optional[str] = None
+    daily_drive_cap_hours: int = 6
+    time_budget_mode: str = "moderate"
+    pins: list = Field(default_factory=list)
+    days: list = Field(default_factory=list)
+    notes: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+def _trip_to_payload(trip: Trip) -> TripPayload:
+    return TripPayload(
+        id=str(trip.id),
+        name=trip.name,
+        origin_name=trip.origin_name,
+        origin_lat=trip.origin_lat,
+        origin_lng=trip.origin_lng,
+        destination_name=trip.destination_name,
+        destination_lat=trip.destination_lat,
+        destination_lng=trip.destination_lng,
+        start_date=trip.start_date,
+        end_date=trip.end_date,
+        arrival_time=trip.arrival_time,
+        daily_drive_cap_hours=trip.daily_drive_cap_hours,
+        time_budget_mode=trip.time_budget_mode,
+        pins=trip.pins,
+        days=trip.days,
+        notes=trip.notes,
+        created_at=trip.created_at.isoformat() if trip.created_at else None,
+        updated_at=trip.updated_at.isoformat() if trip.updated_at else None,
+    )
+
+
+@app.post("/api/v1/trips", response_model=TripPayload)
+async def create_trip(
+    payload: TripPayload,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Create a new trip owned by the caller."""
+    now = datetime.utcnow()
+    trip = Trip(
+        user_id=user.id,
+        name=payload.name,
+        origin_name=payload.origin_name,
+        origin_lat=payload.origin_lat,
+        origin_lng=payload.origin_lng,
+        destination_name=payload.destination_name,
+        destination_lat=payload.destination_lat,
+        destination_lng=payload.destination_lng,
+        start_date=payload.start_date,
+        end_date=payload.end_date,
+        arrival_time=payload.arrival_time,
+        daily_drive_cap_hours=payload.daily_drive_cap_hours,
+        time_budget_mode=payload.time_budget_mode,
+        pins=payload.pins,
+        days=payload.days,
+        notes=payload.notes,
+        created_at=now,
+        updated_at=now,
+    )
+    await trip.insert()
+    return _trip_to_payload(trip)
+
+
+@app.get("/api/v1/trips")
+async def list_trips(user: CurrentUser = Depends(get_current_user)):
+    """List the caller's trips, most recently updated first."""
+    docs = (
+        await Trip.find(Trip.user_id == user.id)
+        .sort(-Trip.updated_at)
+        .to_list()
+    )
+    return {"trips": [_trip_to_payload(t).model_dump() for t in docs]}
+
+
+@app.get("/api/v1/trips/{trip_id}", response_model=TripPayload)
+async def get_trip(
+    trip_id: str,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Read a single trip. 404s if it doesn't exist or belongs to someone
+    else — we don't leak existence."""
+    trip = await Trip.get(trip_id)
+    if trip is None or trip.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Trip not found")
+    return _trip_to_payload(trip)
+
+
+@app.put("/api/v1/trips/{trip_id}", response_model=TripPayload)
+async def update_trip(
+    trip_id: str,
+    payload: TripPayload,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Replace the trip's fields. Server preserves user_id + created_at;
+    everything else comes from the payload. Saves and returns canonical
+    server state so the client doesn't drift on edge cases (timestamps)."""
+    trip = await Trip.get(trip_id)
+    if trip is None or trip.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Trip not found")
+    trip.name = payload.name
+    trip.origin_name = payload.origin_name
+    trip.origin_lat = payload.origin_lat
+    trip.origin_lng = payload.origin_lng
+    trip.destination_name = payload.destination_name
+    trip.destination_lat = payload.destination_lat
+    trip.destination_lng = payload.destination_lng
+    trip.start_date = payload.start_date
+    trip.end_date = payload.end_date
+    trip.arrival_time = payload.arrival_time
+    trip.daily_drive_cap_hours = payload.daily_drive_cap_hours
+    trip.time_budget_mode = payload.time_budget_mode
+    trip.pins = payload.pins
+    trip.days = payload.days
+    trip.notes = payload.notes
+    trip.updated_at = datetime.utcnow()
+    await trip.save()
+    return _trip_to_payload(trip)
+
+
+@app.delete("/api/v1/trips/{trip_id}")
+async def delete_trip(
+    trip_id: str,
+    user: CurrentUser = Depends(get_current_user),
+):
+    trip = await Trip.get(trip_id)
+    if trip is None or trip.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Trip not found")
+    await trip.delete()
+    return {"success": True}
+
 
 @app.get("/api/v1/poi/facts")
 async def get_poi_facts():
