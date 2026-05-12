@@ -55,7 +55,11 @@ EngineRequest = {
   },
   intent: {                        # what
     invocation: auto|manual|planning|voice,
-    desired_categories?: [...],    # explicit, may come from voice/LLM
+    desired_categories?: [...],    # broad UI buckets (see "Personalization vocabulary")
+    desired_interests?: [          # specific tags; expanded into Mapbox queries
+      {label, mapbox_categories: [...], keywords: [...]},
+      ...
+    ],
     constraints?: {                # parseable from natural language
       max_detour_miles?,
       max_stop_minutes?,
@@ -93,6 +97,83 @@ adapts subtly per surface:
 
 Not a casual friend (tone too loose for ranked output users must trust);
 not a pragmatic copilot only (under-uses the data we collect on long trips).
+
+## Personalization vocabulary: categories vs interests
+
+The engine reads *two* personalization layers, not one. Conflating them
+into a single "preferred POI types" list (what the current implementation
+does) is why the system can't tell the difference between a user who
+"likes restaurants" and a user who "loves small wineries and lake fishing."
+
+### Layer 1 — Categories (broad, structural)
+
+A finite list of ~14 buckets (`restaurant`, `gas_station`, `park`,
+`coffee`, `scenic`, …). Used for:
+
+- UI grouping in the preferences screen
+- Structural filtering ("the user asked for a restaurant; only consider
+  restaurants")
+- The auto-poll's category-balance rule on long trips (don't surface 3
+  cafes back-to-back)
+
+This is what `profile.preferred_poi_types` currently is. The brief
+*keeps* it; categories aren't the wrong abstraction, they're just an
+incomplete one.
+
+### Layer 2 — Interests (specific, open-ish)
+
+A list of user-stated specifics: `"small wineries"`, `"lakes to fish"`,
+`"vinyl record stores"`, `"card shops"`, `"state parks with hiking"`.
+
+Each interest stored as:
+
+```
+{ label: "small wineries",
+  mapbox_categories: ["winery"],
+  keywords: ["estate", "vineyard"] }
+```
+
+The `label` is what the user typed. The `mapbox_categories` and
+`keywords` are how the engine queries Mapbox to find matching POIs.
+Interests carry **heavier scoring weight than categories** because they
+encode more specific signal.
+
+### How interests get populated (entry UX)
+
+Two paths, same storage shape:
+
+1. **Curated chips** — preferences screen offers a search-driven list of
+   ~100–200 common interests pre-mapped to Mapbox subcategories. User
+   taps to add. No LLM involvement.
+2. **Free-text "add custom"** — user types whatever; on save, an LLM
+   translates `"lakes to fish"` into the structured
+   `{mapbox_categories: [lake, marina], keywords: [fishing, boat launch]}`
+   shape. Result is identical to a curated chip — the LLM is invisible
+   plumbing, not a runtime dependency.
+
+The LLM-readiness commitment from the "One engine" section pays off
+here: voice asks, free-text interests, and planning-time natural
+language all collapse into the same structured intent the engine
+already knows how to consume.
+
+### The hard ceiling
+
+The system fails — visibly — on places that **don't exist in Mapbox at
+all**. A bait shack run out of someone's house, a barn-of-antiques on a
+back road, a venue too new to be indexed. No amount of clever querying
+finds POIs that aren't in the data.
+
+Mitigations (in roughly cost order, none implemented yet):
+
+- Multi-source ingestion (Yelp / Foursquare / Google Places) — fills
+  category gaps and adds long-tail coverage. Costs API calls, rate
+  limits, and reconciliation logic for duplicates.
+- User-contributed POIs — let the driver tag a place mid-route; persists
+  to the user's history only (not shared) until we trust it enough to
+  share.
+
+Today's brief treats Mapbox-only as the working baseline and flags
+multi-source as a known follow-up.
 
 ## The four core dimensions
 
@@ -234,14 +315,23 @@ reason giving the user the signal to accept or reject.
 
 ## Personalization model
 
-Three signals, in order of weight:
+Four signals, in order of weight (heaviest first):
 
-1. **Explicit preferences and intent** — chip multi-select, planning-time
-   declarations, voice queries. Strongest, most legible.
-2. **Trip-level behavior** — accept/dismiss in current trip. Suppresses
-   categories the user just declined.
-3. **Cross-trip history** — persisted category counts, time-of-day patterns,
-   repeat-place affinity. Weakest per-trip, compounds with use.
+1. **Specific interests** — the user said `"small wineries"`, `"card shops"`,
+   `"lakes to fish"`. Strongest signal because most specific. An interest
+   match dominates the score; users who got the system this far have told
+   us exactly what they want.
+2. **Broad categories** — the user picked `restaurant`, `park` in
+   preferences. Weaker than interests but covers the user who didn't
+   bother with specifics. Defines the buckets the engine balances across.
+3. **Trip-level behavior** — accept/dismiss in the current trip.
+   Suppresses categories/interests the user just declined.
+4. **Cross-trip history** — persisted category counts, time-of-day
+   patterns, repeat-place affinity. Weakest per-trip, compounds with use.
+
+A user with two well-set interests should generally be served better than
+one with five categories and no interests — the engine has more to work
+with.
 
 Explicit non-goals:
 - Group / companion preferences
@@ -300,27 +390,50 @@ Replace "the weights feel right" with measurement:
 5. **Voice-intent invocation UI** — how does the user initiate voice asks?
    A press-and-hold of the Suggest FAB? A dedicated mic button? Connected
    to whether we ship a voice answer (Step 4 narration) or just text.
+6. **Curated interest taxonomy** — what ships in v1? Probably 100–200
+   common interests mapped to Mapbox subcategories. Source: start with
+   Mapbox's category list, prune to driver-relevant ones, group by theme
+   (food / drink, outdoors, shopping, services, niche hobbies).
+7. **LLM provider for interest normalization** — local model (cheap,
+   private) vs Anthropic/OpenAI (better quality, costs per save). Save-time
+   only, not per-request, so cost is bounded.
+8. **Interest deduplication** — if the user adds both "wineries" (curated)
+   and "small wineries" (free-text), do we merge? Probably yes, with the
+   most specific one winning.
 
 ## Implementation impact (flagged, not implemented in this brief)
 
-The current implementation has none of the four dimensions wired correctly:
+The current implementation has none of the four dimensions wired correctly,
+nor the interests vocabulary layer:
 
-| Dimension | Current state | Gap |
-|-----------|---------------|-----|
+| Dimension / layer | Current state | Gap |
+|-------------------|---------------|-----|
 | Trip scale | Not detected | Need at trip start, persist for trip |
 | Time-budget mode | Field exists, unused by scorer | Wire to thresholds |
 | User-state context | hour-of-day match only | Add hours-since-last-stop, remaining-drive-time |
 | Quality signal | No rating filter, no review count, no chain guard | All new |
+| Interests layer | Doesn't exist (only broad categories) | New profile field, new entry UI, new query expansion, LLM normalization for free-text |
 
 Critical files that will change when implementation lands:
 - `backend/app/services/stop_recommendations.py` — score function rewrite
-  around the four dimensions
+  around the four dimensions + interest-match weighting
 - `backend/app/main.py` — `/recommendations/stops` endpoint accepts the
-  full `EngineRequest` shape (context + intent)
-- `frontend/lib/services/recommendation_service.dart` — sends context for
-  trip scale + budget mode; surfaces accept/dismiss to persistence
+  full `EngineRequest` shape (context + intent including interests)
+- `backend/app/database.py` — `UserProfile.interests` field (list of
+  `{label, mapbox_categories, keywords}` objects)
+- `backend/app/services/mapbox_search.py` — query expansion: an interest
+  with multiple `mapbox_categories` fans out into parallel category
+  searches, then keyword post-filter
 - New: backend trip-scale detection helper (likely
   `backend/app/utils/polyline.py`)
+- New: backend LLM normalizer for free-text interests (only invoked on
+  profile-save, not per-request)
+- `frontend/lib/services/recommendation_service.dart` — sends context for
+  trip scale + budget mode; surfaces accept/dismiss to persistence
+- `frontend/lib/services/user_profile_service.dart` — extends `UserProfile`
+  with `interests` field
+- `frontend/lib/screens/preferences_screen.dart` — adds an "Interests"
+  section: chip-search of curated list + "Add custom" free-text entry
 - New: planning-surface UI (Flutter, future)
 - New: post-trip rating UI (Flutter, future)
 
@@ -329,15 +442,21 @@ Critical files that will change when implementation lands:
 This brief is signed off when the user agrees:
 - The four dimensions are the right framing
 - The "one engine, four surfaces" split is the right shape
+- The two-layer personalization vocabulary (categories + interests) is
+  the right model, with interests carrying heavier weight
+- The Mapbox-data-coverage ceiling is the acknowledged limit, mitigated
+  by future multi-source ingestion rather than by the recommendation
+  engine itself
 - The hard "When silent" rules apply only to auto-poll (manual / planning /
   voice are user-initiated and always respond)
 - Cold-start strategy handles the planning surface correctly
 - The calibration plan is something we'll *actually* do, not a wish
-- The LLM-readiness commitment (engine interface designed for it) is what
-  the user meant by "develop with the LLM layer in mind"
+- The LLM-readiness commitment (engine interface designed for it; LLM
+  used for free-text interest normalization at profile-save time) is
+  what the user meant by "develop with the LLM layer in mind"
 
 After signoff:
-- The brief gets committed to `docs/recommendations-brief.md` (proposed
-  permanent home) so it's referenceable as design intent
+- This brief is the design intent document at
+  `docs/recommendations-brief.md`
 - A separate, code-focused implementation plan derives from this brief
 - Nothing in the codebase changes until that derived plan is approved
