@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'screens/navigation_dashboard.dart';
+import 'services/in_nav_surface_pusher.dart';
 import 'services/navigation_service.dart';
-import 'services/recommendation_service.dart';
 import 'widgets/auth_gate.dart';
 import 'widgets/poi_dashboard.dart';
 import 'widgets/recommendation_overlay.dart';
@@ -35,6 +35,8 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     // Initialize navigation service (sets up controllers)
     NavigationService.initialize();
+    // Mirror Flutter-side budget + recommendation state down to native.
+    InNavSurfacePusher().attach();
 
     return MultiProvider(
       providers: [
@@ -49,9 +51,10 @@ class MyApp extends StatelessWidget {
         ),
 
         // Recommendation service polls during nav and exposes the next
-        // suggestion to surface.
-        ChangeNotifierProvider(
-          create: (_) => RecommendationService(),
+        // suggestion to surface. Singleton on NavigationService so the
+        // controller and any non-widget code can reach it.
+        ChangeNotifierProvider.value(
+          value: NavigationService.recommendations,
         ),
       ],
       child: MaterialApp(

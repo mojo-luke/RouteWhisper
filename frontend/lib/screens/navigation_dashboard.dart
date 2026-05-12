@@ -31,15 +31,25 @@ class _NavigationDashboardState extends State<NavigationDashboard> {
     _hydrateBudgetFromProfile();
   }
 
-  /// Seed WaypointManager.tripBudgetMinutes from the signed-in user's
-  /// profile so the BudgetPill renders something on first paint. Best-effort:
-  /// no UI block on failure — the pill just stays hidden if profile fetch
-  /// fails.
+  /// Pull the signed-in user's profile and apply it to the live services:
+  ///   * Seeds `WaypointManager.tripBudgetMinutes` so the BudgetPill renders
+  ///     on first paint.
+  ///   * Configures `RecommendationService` with the user's enable toggle
+  ///     and per-trip / gap limits, so the in-nav surfaces respect their
+  ///     choice on the next trip.
+  /// Best-effort: if the profile fetch fails, both surfaces fall back to
+  /// their default (built-in) settings.
   Future<void> _hydrateBudgetFromProfile() async {
     final profile = await UserProfileService.fetch();
     if (!mounted || profile == null) return;
     NavigationService.waypointManager
         .setTripBudget(profile.defaultTimeBudgetMinutes);
+    NavigationService.recommendations.configure(
+      enabled: profile.recommendationsEnabled,
+      maxPerTrip: profile.recommendationsMaxPerTrip,
+      minGapBetweenSurfaces:
+          Duration(minutes: profile.recommendationsMinGapMinutes),
+    );
   }
 
   @override

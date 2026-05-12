@@ -18,6 +18,25 @@
         android:layout_alignParentTop="true"
         android:layout_margin="16dp" />
 
+    <!-- Budget chip - "X / Y min slack". Set by Flutter via method channel
+         whenever WaypointManager budget state changes. Hidden by default. -->
+    <TextView
+        android:id="@+id/budgetChip"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_below="@id/maneuverView"
+        android:layout_alignParentEnd="true"
+        android:layout_marginEnd="16dp"
+        android:layout_marginTop="4dp"
+        android:paddingHorizontal="12dp"
+        android:paddingVertical="6dp"
+        android:visibility="gone"
+        android:textColor="#7BE08F"
+        android:textSize="12sp"
+        android:textStyle="bold"
+        android:background="@drawable/budget_chip_bg"
+        android:text="0 / 60 min slack" />
+
     <!-- Waypoint Progress Card - Shows next waypoint info (Google Maps style) -->
     <androidx.cardview.widget.CardView
         android:id="@+id/waypointProgressCard"
@@ -109,6 +128,19 @@
         android:src="@android:drawable/ic_menu_search"
         android:backgroundTint="@android:color/holo_blue_dark" />
 
+    <!-- Suggest-a-Stop Button - Force a proactive recommendation poll -->
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/suggestStopButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_alignParentEnd="true"
+        android:layout_above="@id/findStopsButton"
+        android:layout_marginEnd="16dp"
+        android:layout_marginBottom="12dp"
+        android:contentDescription="Suggest a stop now"
+        android:src="@android:drawable/ic_menu_compass"
+        android:backgroundTint="#FB8C00" />
+
     <!-- Recenter Button - Floating action button to return to following mode -->
     <com.google.android.material.floatingactionbutton.FloatingActionButton
         android:id="@+id/recenterButton"
@@ -121,6 +153,104 @@
         android:contentDescription="@string/recenter_camera"
         android:src="@android:drawable/ic_menu_mylocation"
         android:visibility="gone" />
+
+    <!-- Recommendation banner - bottom-anchored card with category icon,
+         name, reason, "Not now" + "Add stop" buttons. Set by Flutter via
+         method channel when RecommendationService surfaces a suggestion. -->
+    <androidx.cardview.widget.CardView
+        android:id="@+id/recommendationCard"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_above="@id/tripProgressView"
+        android:layout_marginHorizontal="16dp"
+        android:layout_marginBottom="12dp"
+        android:visibility="gone"
+        app:cardElevation="8dp"
+        app:cardCornerRadius="16dp"
+        app:cardBackgroundColor="#252525">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="14dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:id="@+id/recommendationIcon"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textSize="22sp"
+                    android:text="📍" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginStart="10dp"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/recommendationName"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:maxLines="1"
+                        android:ellipsize="end"
+                        android:textColor="@android:color/white"
+                        android:textSize="15sp"
+                        android:textStyle="bold"
+                        android:text="Place name" />
+
+                    <TextView
+                        android:id="@+id/recommendationReason"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:maxLines="2"
+                        android:ellipsize="end"
+                        android:textColor="#B3FFFFFF"
+                        android:textSize="12sp"
+                        android:text="Suggested reason" />
+
+                </LinearLayout>
+
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/recommendationDismissButton"
+                    style="?android:attr/buttonBarButtonStyle"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Not now"
+                    android:textColor="@android:color/white"
+                    android:background="@drawable/recommendation_button_outline" />
+
+                <Button
+                    android:id="@+id/recommendationAcceptButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="2"
+                    android:layout_marginStart="10dp"
+                    android:text="Add stop"
+                    android:textColor="@android:color/white"
+                    android:background="@drawable/recommendation_button_filled" />
+
+            </LinearLayout>
+
+        </LinearLayout>
+
+    </androidx.cardview.widget.CardView>
 
     <!-- Flutter overlay container for POI discovery -->
     <FrameLayout

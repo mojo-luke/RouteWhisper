@@ -87,6 +87,10 @@ class MainActivity : FlutterActivity() {
                 "showPoisOnMap" -> handleShowPoisOnMap(call, result)
                 "clearPoisFromMap" -> handleClearPoisFromMap(result)
                 "hideOverlay" -> handleHideOverlay(result)
+                "setBudgetStatus" -> handleSetBudgetStatus(call, result)
+                "clearBudgetStatus" -> handleClearBudgetStatus(result)
+                "setRecommendation" -> handleSetRecommendation(call, result)
+                "clearRecommendation" -> handleClearRecommendation(result)
                 else -> result.notImplemented()
             }
         }
@@ -240,6 +244,40 @@ class MainActivity : FlutterActivity() {
 
     private fun handleHideOverlay(result: MethodChannel.Result) {
         MapActivity.currentInstance?.hideFlutterOverlay()
+        result.success(null)
+    }
+
+    private fun handleSetBudgetStatus(call: MethodCall, result: MethodChannel.Result) {
+        val used = call.argument<Int>("usedMinutes")
+        val total = call.argument<Int>("totalMinutes")
+        if (used == null || total == null) {
+            result.error("INVALID_ARGS", "Missing usedMinutes or totalMinutes", null)
+            return
+        }
+        MapActivity.currentInstance?.setBudgetStatusUi(used, total)
+        result.success(null)
+    }
+
+    private fun handleClearBudgetStatus(result: MethodChannel.Result) {
+        MapActivity.currentInstance?.clearBudgetStatusUi()
+        result.success(null)
+    }
+
+    private fun handleSetRecommendation(call: MethodCall, result: MethodChannel.Result) {
+        val poiId = call.argument<String>("poiId")
+        val name = call.argument<String>("name")
+        val category = call.argument<String>("category")
+        val reason = call.argument<String>("reason")
+        if (poiId == null || name == null || category == null || reason == null) {
+            result.error("INVALID_ARGS", "Missing recommendation fields", null)
+            return
+        }
+        MapActivity.currentInstance?.setRecommendationUi(poiId, name, category, reason)
+        result.success(null)
+    }
+
+    private fun handleClearRecommendation(result: MethodChannel.Result) {
+        MapActivity.currentInstance?.clearRecommendationUi()
         result.success(null)
     }
 

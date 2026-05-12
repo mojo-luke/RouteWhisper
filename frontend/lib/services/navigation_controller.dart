@@ -42,6 +42,9 @@ class NavigationController extends ChangeNotifier {
       onPopRoute: _onPopRoute,
       onRequestPoisOnMap: _onRequestPoisOnMap,
       onPoiTapped: _onPoiTapped,
+      onRecommendationAccept: _onRecommendationAccept,
+      onRecommendationDismiss: _onRecommendationDismiss,
+      onSuggestStopRequested: _onSuggestStopRequested,
       onWaypointProgressRequest: _onWaypointProgressRequest,
     ));
     debugPrint('🎯 NavigationController initialized');
@@ -290,6 +293,57 @@ class NavigationController extends ChangeNotifier {
     await _bridge.hideOverlay();
   }
 
+  // Native banner button: "Add stop". Same flow as the Flutter
+  // RecommendationCard — convert the suggestion's POI to a waypoint, run
+  // an in-place route update, then tell the service it was accepted so
+  // it suppresses the POI for the rest of the trip.
+  Future<void> _onRecommendationAccept(String poiId) async {
+    final service = NavigationService.recommendations;
+    final suggestion = service.current;
+    if (suggestion == null || suggestion.poi.id != poiId) {
+      debugPrint('⚠️ recommendationAccept for stale poiId $poiId; ignoring');
+      service.dismissCurrent();
+      return;
+    }
+
+    final poi = suggestion.poi;
+    final waypoint = Waypoint.fromPOI(
+      poi,
+      NavigationService.waypointManager.getWaypoints().length,
+    );
+    NavigationService.waypointManager.addWaypoint(waypoint);
+
+    if (NavigationService.isNavigating &&
+        NavigationService.currentRoute != null) {
+      final route = NavigationService.currentRoute!;
+      final intermediates = NavigationService.waypointManager
+          .getWaypoints()
+          .where((w) =>
+              w.type != WaypointType.origin &&
+              w.type != WaypointType.destination)
+          .toList();
+      await updateNavigationRoute(
+        originLat: route.originLat,
+        originLng: route.originLng,
+        destLat: route.destLat,
+        destLng: route.destLng,
+        waypoints: intermediates.map((w) => [w.longitude, w.latitude]).toList(),
+        waypointNames: intermediates.map((w) => w.name).toList(),
+      );
+    }
+    service.acceptCurrent();
+  }
+
+  // Native banner button: "Not now". Suppress for the rest of the trip.
+  void _onRecommendationDismiss(String poiId) {
+    NavigationService.recommendations.dismissCurrent();
+  }
+
+  // Native FAB: user tapped "Suggest a stop". Force a one-off poll that
+  // bypasses the time/per-trip caps.
+  Future<void> _onSuggestStopRequested() async {
+    await NavigationService.recommendations.forcePoll();
+  }
 }
 
 /// Bottom-sheet-style route used while the live map is the actual background.

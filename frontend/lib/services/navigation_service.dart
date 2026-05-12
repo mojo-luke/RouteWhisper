@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'navigation_controller.dart';
 import 'poi_api_service.dart';
+import 'recommendation_service.dart';
 import 'waypoint_manager.dart';
 import 'waypoint_api_service.dart';
 import 'package:frontend/models/waypoint.dart';
@@ -33,6 +34,7 @@ class NavigationService {
   static final NavigationController _controller = NavigationController();
   static final POIApiService _poiApi = POIApiService();
   static final WaypointManager _waypointManager = WaypointManager();
+  static final RecommendationService _recommendations = RecommendationService();
 
   // Current route info
   static RouteInfo? _currentRoute;
@@ -79,6 +81,9 @@ class NavigationService {
 
   // Waypoint getters
   static WaypointManager get waypointManager => _waypointManager;
+
+  // Recommendation getter — same singleton the Provider exposes.
+  static RecommendationService get recommendations => _recommendations;
   static bool get hasWaypoints => _waypointManager.hasIntermediateWaypoints();
   static Waypoint? get activeWaypoint => _activeWaypoint;
 

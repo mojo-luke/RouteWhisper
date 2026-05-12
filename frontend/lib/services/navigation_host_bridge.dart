@@ -76,6 +76,32 @@ abstract class NavigationHostBridge {
   /// keeps painting over the live map after the sheet dismisses.
   Future<void> hideOverlay();
 
+  /// Push the current trip-budget status to the native map. Native renders
+  /// a small chip near the trip progress card. Pass null to hide the chip
+  /// (no budget set / trip ended).
+  Future<void> setBudgetStatus({
+    required int usedMinutes,
+    required int totalMinutes,
+  });
+
+  /// Clear the native budget chip (no budget configured for this trip).
+  Future<void> clearBudgetStatus();
+
+  /// Push the currently-surfaced recommendation to the native map. Native
+  /// renders a bottom banner with [name], [reason], category icon, and
+  /// Add stop / Not now buttons. [poiId] is the canonical id (matches
+  /// `StopSuggestion.poi.id`), echoed back on the inbound accept/dismiss
+  /// events.
+  Future<void> setRecommendation({
+    required String poiId,
+    required String name,
+    required String category,
+    required String reason,
+  });
+
+  /// Clear the native recommendation banner (no current suggestion).
+  Future<void> clearRecommendation();
+
   /// Register the inbound-event handlers. Native invokes these via the
   /// underlying transport (method channel) and the bridge dispatches to the
   /// matching field on [handlers]. Calling [setHandlers] again replaces the
@@ -137,6 +163,21 @@ class NavigationHostHandlers {
   /// **Native trigger:** `MapActivity` annotation tap listener.
   final void Function(String poiId) onPoiTapped;
 
+  /// User tapped "Add stop" on the native recommendation banner. Flutter
+  /// runs the same add-stop flow as the Flutter `RecommendationCard`.
+  /// **Native trigger:** banner button in `MapActivity`.
+  final void Function(String poiId) onRecommendationAccept;
+
+  /// User tapped "Not now" on the native recommendation banner. Flutter
+  /// suppresses this suggestion for the rest of the trip.
+  /// **Native trigger:** banner button in `MapActivity`.
+  final void Function(String poiId) onRecommendationDismiss;
+
+  /// User tapped the "Suggest a stop" FAB during nav. Flutter runs a manual
+  /// poll that bypasses the rate caps.
+  /// **Native trigger:** suggestion FAB in `MapActivity`.
+  final void Function() onSuggestStopRequested;
+
   /// Request/response: native asks Flutter to format the next-waypoint
   /// progress card. Flutter returns `{name, distanceFormatted, etaFormatted,
   /// stopIndicator, ...}` or null when there's nothing to show (final leg).
@@ -156,6 +197,9 @@ class NavigationHostHandlers {
     required this.onPopRoute,
     required this.onRequestPoisOnMap,
     required this.onPoiTapped,
+    required this.onRecommendationAccept,
+    required this.onRecommendationDismiss,
+    required this.onSuggestStopRequested,
     required this.onWaypointProgressRequest,
   });
 }
@@ -248,6 +292,42 @@ class MethodChannelNavigationHostBridge implements NavigationHostBridge {
   }
 
   @override
+  Future<void> setBudgetStatus({
+    required int usedMinutes,
+    required int totalMinutes,
+  }) async {
+    await _channel.invokeMethod('setBudgetStatus', {
+      'usedMinutes': usedMinutes,
+      'totalMinutes': totalMinutes,
+    });
+  }
+
+  @override
+  Future<void> clearBudgetStatus() async {
+    await _channel.invokeMethod('clearBudgetStatus');
+  }
+
+  @override
+  Future<void> setRecommendation({
+    required String poiId,
+    required String name,
+    required String category,
+    required String reason,
+  }) async {
+    await _channel.invokeMethod('setRecommendation', {
+      'poiId': poiId,
+      'name': name,
+      'category': category,
+      'reason': reason,
+    });
+  }
+
+  @override
+  Future<void> clearRecommendation() async {
+    await _channel.invokeMethod('clearRecommendation');
+  }
+
+  @override
   void setHandlers(NavigationHostHandlers handlers) {
     _handlers = handlers;
   }
@@ -299,6 +379,20 @@ class MethodChannelNavigationHostBridge implements NavigationHostBridge {
       case 'poiTapped':
         final data = Map<String, dynamic>.from(call.arguments as Map);
         h.onPoiTapped(data['poiId'] as String);
+        return null;
+
+      case 'recommendationAccept':
+        final data = Map<String, dynamic>.from(call.arguments as Map);
+        h.onRecommendationAccept(data['poiId'] as String);
+        return null;
+
+      case 'recommendationDismiss':
+        final data = Map<String, dynamic>.from(call.arguments as Map);
+        h.onRecommendationDismiss(data['poiId'] as String);
+        return null;
+
+      case 'suggestStopRequested':
+        h.onSuggestStopRequested();
         return null;
 
       case 'calculateWaypointProgress':

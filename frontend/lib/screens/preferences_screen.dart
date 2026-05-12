@@ -174,8 +174,103 @@ class _PreferencesScreenState extends State<PreferencesScreen> {
                     );
                   }).toList(),
                 ),
+                const SizedBox(height: 32),
+                _SectionHeader(
+                  title: 'Suggestions',
+                  subtitle:
+                      'Proactive stop ideas the app surfaces during nav.',
+                ),
+                SwitchListTile.adaptive(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Enable suggestions during nav'),
+                  value: _profile.recommendationsEnabled,
+                  onChanged: _saving
+                      ? null
+                      : (v) => _save(
+                            _profile.copyWith(recommendationsEnabled: v),
+                          ),
+                ),
+                _SliderRow(
+                  label: 'Max per trip',
+                  value: _profile.recommendationsMaxPerTrip.toDouble(),
+                  min: 1,
+                  max: 10,
+                  divisions: 9,
+                  formatLabel: (v) => '${v.round()} per trip',
+                  onChanged: _saving || !_profile.recommendationsEnabled
+                      ? null
+                      : (v) => _save(
+                            _profile.copyWith(
+                              recommendationsMaxPerTrip: v.round(),
+                            ),
+                          ),
+                ),
+                _SliderRow(
+                  label: 'Min minutes between',
+                  value: _profile.recommendationsMinGapMinutes.toDouble(),
+                  min: 5,
+                  max: 60,
+                  divisions: 11,
+                  formatLabel: (v) => '${v.round()} min',
+                  onChanged: _saving || !_profile.recommendationsEnabled
+                      ? null
+                      : (v) => _save(
+                            _profile.copyWith(
+                              recommendationsMinGapMinutes: v.round(),
+                            ),
+                          ),
+                ),
               ],
             ),
+    );
+  }
+}
+
+class _SliderRow extends StatelessWidget {
+  final String label;
+  final double value;
+  final double min;
+  final double max;
+  final int divisions;
+  final String Function(double) formatLabel;
+  final ValueChanged<double>? onChanged;
+
+  const _SliderRow({
+    required this.label,
+    required this.value,
+    required this.min,
+    required this.max,
+    required this.divisions,
+    required this.formatLabel,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(child: Text(label)),
+              Text(
+                formatLabel(value),
+                style: const TextStyle(color: Colors.white70, fontSize: 12),
+              ),
+            ],
+          ),
+          Slider(
+            value: value.clamp(min, max),
+            min: min,
+            max: max,
+            divisions: divisions,
+            label: formatLabel(value),
+            onChanged: onChanged,
+          ),
+        ],
+      ),
     );
   }
 }

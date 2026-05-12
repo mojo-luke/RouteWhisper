@@ -10,10 +10,18 @@ class UserProfile {
   final int? defaultTimeBudgetMinutes;
   final List<String> dietaryRestrictions;
 
+  // Recommendation surface controls — mirror server-side fields.
+  final bool recommendationsEnabled;
+  final int recommendationsMaxPerTrip;
+  final int recommendationsMinGapMinutes;
+
   const UserProfile({
     this.preferredPoiTypes = const [],
     this.defaultTimeBudgetMinutes,
     this.dietaryRestrictions = const [],
+    this.recommendationsEnabled = true,
+    this.recommendationsMaxPerTrip = 3,
+    this.recommendationsMinGapMinutes = 15,
   });
 
   factory UserProfile.fromJson(Map<String, dynamic> json) => UserProfile(
@@ -22,12 +30,21 @@ class UserProfile {
         defaultTimeBudgetMinutes: json['default_time_budget_minutes'] as int?,
         dietaryRestrictions:
             (json['dietary_restrictions'] as List? ?? const []).cast<String>(),
+        recommendationsEnabled:
+            (json['recommendations_enabled'] as bool?) ?? true,
+        recommendationsMaxPerTrip:
+            (json['recommendations_max_per_trip'] as int?) ?? 3,
+        recommendationsMinGapMinutes:
+            (json['recommendations_min_gap_minutes'] as int?) ?? 15,
       );
 
   Map<String, dynamic> toJson() => {
         'preferred_poi_types': preferredPoiTypes,
         'default_time_budget_minutes': defaultTimeBudgetMinutes,
         'dietary_restrictions': dietaryRestrictions,
+        'recommendations_enabled': recommendationsEnabled,
+        'recommendations_max_per_trip': recommendationsMaxPerTrip,
+        'recommendations_min_gap_minutes': recommendationsMinGapMinutes,
       };
 
   UserProfile copyWith({
@@ -35,6 +52,9 @@ class UserProfile {
     int? defaultTimeBudgetMinutes,
     bool clearTimeBudget = false,
     List<String>? dietaryRestrictions,
+    bool? recommendationsEnabled,
+    int? recommendationsMaxPerTrip,
+    int? recommendationsMinGapMinutes,
   }) =>
       UserProfile(
         preferredPoiTypes: preferredPoiTypes ?? this.preferredPoiTypes,
@@ -42,6 +62,12 @@ class UserProfile {
             ? null
             : (defaultTimeBudgetMinutes ?? this.defaultTimeBudgetMinutes),
         dietaryRestrictions: dietaryRestrictions ?? this.dietaryRestrictions,
+        recommendationsEnabled:
+            recommendationsEnabled ?? this.recommendationsEnabled,
+        recommendationsMaxPerTrip:
+            recommendationsMaxPerTrip ?? this.recommendationsMaxPerTrip,
+        recommendationsMinGapMinutes:
+            recommendationsMinGapMinutes ?? this.recommendationsMinGapMinutes,
       );
 }
 

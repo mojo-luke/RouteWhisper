@@ -129,6 +129,20 @@ class MapActivity : AppCompatActivity() {
 
     // Find Stops button for POI discovery during navigation
     private lateinit var findStopsButton: FloatingActionButton
+    private lateinit var suggestStopButton: FloatingActionButton
+
+    // In-nav surfaces pushed down from Flutter (Step 6 / Step 7 follow-up).
+    private lateinit var budgetChip: TextView
+    private lateinit var recommendationCard: View
+    private lateinit var recommendationIcon: TextView
+    private lateinit var recommendationName: TextView
+    private lateinit var recommendationReason: TextView
+    private lateinit var recommendationAcceptButton: View
+    private lateinit var recommendationDismissButton: View
+
+    // The id of the currently surfaced recommendation. Used as a guard
+    // against stale taps after the surface was replaced or cleared.
+    private var currentRecommendationPoiId: String? = null
 
     // Flutter overlay for POI discovery
     private lateinit var flutterContainer: FrameLayout
@@ -167,6 +181,10 @@ class MapActivity : AppCompatActivity() {
         tripProgressView = findViewById(R.id.tripProgressView)
         recenterButton = findViewById<FloatingActionButton>(R.id.recenterButton)
         findStopsButton = findViewById<FloatingActionButton>(R.id.findStopsButton)
+        suggestStopButton = findViewById<FloatingActionButton>(R.id.suggestStopButton)
+        suggestStopButton.setOnClickListener {
+            MainActivity.methodChannelInstance?.invokeMethod("suggestStopRequested", null)
+        }
         flutterContainer = findViewById(R.id.flutterContainer)
 
         // Initialize waypoint progress views
@@ -175,6 +193,31 @@ class MapActivity : AppCompatActivity() {
         waypointDistanceText = findViewById(R.id.waypointDistanceText)
         waypointEtaText = findViewById(R.id.waypointEtaText)
         waypointStopIndicator = findViewById(R.id.waypointStopIndicator)
+
+        // In-nav surfaces (budget chip + recommendation banner).
+        budgetChip = findViewById(R.id.budgetChip)
+        recommendationCard = findViewById(R.id.recommendationCard)
+        recommendationIcon = findViewById(R.id.recommendationIcon)
+        recommendationName = findViewById(R.id.recommendationName)
+        recommendationReason = findViewById(R.id.recommendationReason)
+        recommendationAcceptButton = findViewById(R.id.recommendationAcceptButton)
+        recommendationDismissButton = findViewById(R.id.recommendationDismissButton)
+        recommendationAcceptButton.setOnClickListener {
+            val poiId = currentRecommendationPoiId ?: return@setOnClickListener
+            MainActivity.methodChannelInstance?.invokeMethod(
+                "recommendationAccept",
+                mapOf("poiId" to poiId),
+            )
+            hideRecommendationBanner()
+        }
+        recommendationDismissButton.setOnClickListener {
+            val poiId = currentRecommendationPoiId ?: return@setOnClickListener
+            MainActivity.methodChannelInstance?.invokeMethod(
+                "recommendationDismiss",
+                mapOf("poiId" to poiId),
+            )
+            hideRecommendationBanner()
+        }
 
         // Set up recenter button click listener
         recenterButton.setOnClickListener {
@@ -1112,6 +1155,80 @@ class MapActivity : AppCompatActivity() {
             flutterContainer.visibility = View.GONE
             Log.d(TAG, "Flutter overlay hidden")
         }
+    }
+
+    /**
+     * Update the budget chip's text + color from Flutter's WaypointManager.
+     * Color tiers mirror BudgetPill: green when slack > 0, amber when 0,
+     * red when over. Call [clearBudgetStatusUi] to hide the chip when
+     * Flutter has no budget set.
+     */
+    fun setBudgetStatusUi(usedMinutes: Int, totalMinutes: Int) {
+        runOnUiThread {
+            val remaining = totalMinutes - usedMinutes
+            val (fg, bg) = when {
+                remaining > 0 -> Color.parseColor("#7BE08F") to Color.parseColor("#1F3D2A")
+                remaining == 0 -> Color.parseColor("#FFC857") to Color.parseColor("#3D331F")
+                else -> Color.parseColor("#FF8585") to Color.parseColor("#3D1F1F")
+            }
+            budgetChip.text = "$usedMinutes / $totalMinutes min slack"
+            budgetChip.setTextColor(fg)
+            budgetChip.background?.setTint(bg)
+            budgetChip.visibility = View.VISIBLE
+        }
+    }
+
+    fun clearBudgetStatusUi() {
+        runOnUiThread { budgetChip.visibility = View.GONE }
+    }
+
+    /**
+     * Surface a recommendation banner from Flutter's RecommendationService.
+     * Replaces any banner currently shown. Tapping a button posts
+     * `recommendationAccept` / `recommendationDismiss` back over the
+     * method channel with [poiId].
+     */
+    fun setRecommendationUi(
+        poiId: String,
+        name: String,
+        category: String,
+        reason: String,
+    ) {
+        runOnUiThread {
+            currentRecommendationPoiId = poiId
+            recommendationIcon.text = emojiForCategory(category)
+            recommendationName.text = name
+            recommendationReason.text = reason
+            recommendationCard.visibility = View.VISIBLE
+        }
+    }
+
+    fun clearRecommendationUi() {
+        runOnUiThread { hideRecommendationBanner() }
+    }
+
+    private fun hideRecommendationBanner() {
+        currentRecommendationPoiId = null
+        recommendationCard.visibility = View.GONE
+    }
+
+    /** Mirrors the emoji set on the Flutter POI model. */
+    private fun emojiForCategory(category: String): String = when (category) {
+        "gas_station" -> "⛽"
+        "restaurant" -> "🍽️"
+        "coffee" -> "☕"
+        "hotel" -> "🏨"
+        "camping" -> "🏕️"
+        "attraction" -> "🎯"
+        "shopping" -> "🛍️"
+        "scenic" -> "🏞️"
+        "museum" -> "🏛️"
+        "park" -> "🌳"
+        "hospital" -> "🏥"
+        "pharmacy" -> "💊"
+        "bank" -> "🏦"
+        "grocery" -> "🛒"
+        else -> "📍"
     }
 
     /**

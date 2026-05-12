@@ -248,6 +248,14 @@ class UserProfile(Document):
     preferred_poi_types: list = []
     default_time_budget_minutes: Optional[int] = None
     dietary_restrictions: list = []
+
+    # Step 7 — recommendation surface settings. Defaults match the
+    # frontend `_default*` constants for the production build; users can
+    # adjust each independently in the preferences screen.
+    recommendations_enabled: bool = True
+    recommendations_max_per_trip: int = 3
+    recommendations_min_gap_minutes: int = 15
+
     updated_at: datetime = datetime.utcnow()
 
     class Settings:

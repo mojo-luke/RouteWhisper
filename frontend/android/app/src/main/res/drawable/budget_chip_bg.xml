@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Background for the budget chip on MapActivity. Solid fill + rounded
+  corners. The actual color is overridden at runtime via
+  `setColorFilter` to reflect green / amber / red state, so this XML
+  just defines the shape.
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#1F3D2A" />
+    <corners android:radius="16dp" />
+</shape>

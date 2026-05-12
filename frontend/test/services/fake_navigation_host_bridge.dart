@@ -37,6 +37,10 @@ class FakeNavigationHostBridge implements NavigationHostBridge {
   Object? showPoisOnMapError;
   Object? clearPoisFromMapError;
   Object? hideOverlayError;
+  Object? setBudgetStatusError;
+  Object? clearBudgetStatusError;
+  Object? setRecommendationError;
+  Object? clearRecommendationError;
 
   NavigationHostHandlers? _handlers;
 
@@ -161,6 +165,62 @@ class FakeNavigationHostBridge implements NavigationHostBridge {
     }
   }
 
+  @override
+  Future<void> setBudgetStatus({
+    required int usedMinutes,
+    required int totalMinutes,
+  }) async {
+    sentCalls.add(RecordedCall('setBudgetStatus', {
+      'usedMinutes': usedMinutes,
+      'totalMinutes': totalMinutes,
+    }));
+    final err = setBudgetStatusError;
+    if (err != null) {
+      setBudgetStatusError = null;
+      throw err;
+    }
+  }
+
+  @override
+  Future<void> clearBudgetStatus() async {
+    sentCalls.add(const RecordedCall('clearBudgetStatus', <String, dynamic>{}));
+    final err = clearBudgetStatusError;
+    if (err != null) {
+      clearBudgetStatusError = null;
+      throw err;
+    }
+  }
+
+  @override
+  Future<void> setRecommendation({
+    required String poiId,
+    required String name,
+    required String category,
+    required String reason,
+  }) async {
+    sentCalls.add(RecordedCall('setRecommendation', {
+      'poiId': poiId,
+      'name': name,
+      'category': category,
+      'reason': reason,
+    }));
+    final err = setRecommendationError;
+    if (err != null) {
+      setRecommendationError = null;
+      throw err;
+    }
+  }
+
+  @override
+  Future<void> clearRecommendation() async {
+    sentCalls.add(const RecordedCall('clearRecommendation', <String, dynamic>{}));
+    final err = clearRecommendationError;
+    if (err != null) {
+      clearRecommendationError = null;
+      throw err;
+    }
+  }
+
   // --- Inbound (Native → Flutter): one emit per NavigationHostHandlers field ---
   //
   // If a new handler is added to NavigationHostHandlers, add the matching
@@ -213,6 +273,18 @@ class FakeNavigationHostBridge implements NavigationHostBridge {
 
   void emitPoiTapped(String poiId) {
     _requireHandlers().onPoiTapped(poiId);
+  }
+
+  void emitRecommendationAccept(String poiId) {
+    _requireHandlers().onRecommendationAccept(poiId);
+  }
+
+  void emitRecommendationDismiss(String poiId) {
+    _requireHandlers().onRecommendationDismiss(poiId);
+  }
+
+  void emitSuggestStopRequested() {
+    _requireHandlers().onSuggestStopRequested();
   }
 
   Map<String, dynamic>? emitWaypointProgressRequest({

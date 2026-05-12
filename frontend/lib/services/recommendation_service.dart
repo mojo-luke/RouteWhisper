@@ -8,6 +8,15 @@ import 'auth_service.dart';
 import 'navigation_service.dart';
 import 'poi_api_service.dart';
 
+// Debug builds want to actually see suggestions during a short test drive;
+// production should err on the side of not pestering. Both values can be
+// overridden by [RecommendationService.configure] from the user's profile.
+const Duration _defaultPollInterval =
+    kDebugMode ? Duration(minutes: 2) : Duration(minutes: 10);
+const Duration _defaultMinGap =
+    kDebugMode ? Duration(minutes: 5) : Duration(minutes: 15);
+const int _defaultMaxPerTrip = kDebugMode ? 5 : 3;
+
 /// One scored stop suggestion as returned by `/api/v1/recommendations/stops`.
 @immutable
 class StopSuggestion {
@@ -42,9 +51,10 @@ class StopSuggestion {
 class RecommendationService extends ChangeNotifier {
   static const String _baseUrl = 'http://10.0.2.2:8000/api/v1';
 
-  final Duration pollInterval;
-  final Duration minGapBetweenSurfaces;
-  final int maxPerTrip;
+  Duration pollInterval;
+  Duration minGapBetweenSurfaces;
+  int maxPerTrip;
+  bool enabled;
 
   Timer? _timer;
   DateTime? _lastSurface;
@@ -55,14 +65,38 @@ class RecommendationService extends ChangeNotifier {
   StopSuggestion? get current => _current;
 
   RecommendationService({
-    this.pollInterval = const Duration(minutes: 10),
-    this.minGapBetweenSurfaces = const Duration(minutes: 15),
-    this.maxPerTrip = 3,
+    this.pollInterval = _defaultPollInterval,
+    this.minGapBetweenSurfaces = _defaultMinGap,
+    this.maxPerTrip = _defaultMaxPerTrip,
+    this.enabled = true,
   });
+
+  /// Apply runtime settings (typically read from `UserProfile`). Safe to
+  /// call before or after [start]; if a poll timer is running with the
+  /// old interval, it's restarted to pick up the new value.
+  void configure({
+    bool? enabled,
+    int? maxPerTrip,
+    Duration? minGapBetweenSurfaces,
+    Duration? pollInterval,
+  }) {
+    if (enabled != null) this.enabled = enabled;
+    if (maxPerTrip != null) this.maxPerTrip = maxPerTrip;
+    if (minGapBetweenSurfaces != null) {
+      this.minGapBetweenSurfaces = minGapBetweenSurfaces;
+    }
+    if (pollInterval != null && pollInterval != this.pollInterval) {
+      this.pollInterval = pollInterval;
+      if (_timer != null) {
+        stop();
+        start();
+      }
+    }
+  }
 
   /// Start polling. Idempotent — calling twice doesn't double the timer.
   void start() {
-    if (_timer != null) return;
+    if (!enabled || _timer != null) return;
     _timer = Timer.periodic(pollInterval, (_) => poll());
     // Fire one immediately so the user gets a suggestion sooner than 10 min in.
     poll();
@@ -105,15 +139,24 @@ class RecommendationService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// User-initiated manual fetch — bypasses both the per-trip max and the
+  /// minimum-gap cap (the user explicitly asked for a suggestion). Still
+  /// honors the `enabled` flag because that's the user's own setting; if
+  /// you disabled suggestions entirely you don't expect a tap to override.
+  Future<void> forcePoll() => poll(bypassCaps: true);
+
   /// Fetch suggestions and, if the surface caps allow, expose the top one.
-  Future<void> poll() async {
+  Future<void> poll({bool bypassCaps = false}) async {
+    if (!enabled) return;
     final polyline = NavigationService.routePolyline;
     if (polyline == null) return;
     if (!NavigationService.isNavigating) return;
-    if (_surfaceCount >= maxPerTrip) return;
     final now = DateTime.now();
-    if (_lastSurface != null && now.difference(_lastSurface!) < minGapBetweenSurfaces) {
-      return;
+    if (!bypassCaps) {
+      if (_surfaceCount >= maxPerTrip) return;
+      if (_lastSurface != null && now.difference(_lastSurface!) < minGapBetweenSurfaces) {
+        return;
+      }
     }
 
     final token = AuthService.instance.accessToken;

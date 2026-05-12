@@ -119,6 +119,39 @@ void main() {
       expect(outboundCalls.single.method, 'hideOverlay');
     });
 
+    test('setBudgetStatus sends correct method and payload', () async {
+      await bridge.setBudgetStatus(usedMinutes: 35, totalMinutes: 60);
+      expect(outboundCalls.single.method, 'setBudgetStatus');
+      expect(outboundCalls.single.arguments,
+          {'usedMinutes': 35, 'totalMinutes': 60});
+    });
+
+    test('clearBudgetStatus sends correct method', () async {
+      await bridge.clearBudgetStatus();
+      expect(outboundCalls.single.method, 'clearBudgetStatus');
+    });
+
+    test('setRecommendation sends correct method and payload', () async {
+      await bridge.setRecommendation(
+        poiId: 'p1',
+        name: 'In-N-Out Burger',
+        category: 'restaurant',
+        reason: 'You like restaurants',
+      );
+      expect(outboundCalls.single.method, 'setRecommendation');
+      expect(outboundCalls.single.arguments, {
+        'poiId': 'p1',
+        'name': 'In-N-Out Burger',
+        'category': 'restaurant',
+        'reason': 'You like restaurants',
+      });
+    });
+
+    test('clearRecommendation sends correct method', () async {
+      await bridge.clearRecommendation();
+      expect(outboundCalls.single.method, 'clearRecommendation');
+    });
+
     // --- Inbound (Native → Flutter) ---
 
     test('inbound dispatch routes every documented event', () async {
@@ -143,6 +176,12 @@ void main() {
         onPopRoute: () => received['popRoute'] = true,
         onRequestPoisOnMap: () => received['requestPoisOnMap'] = true,
         onPoiTapped: (poiId) => received['poiTapped'] = poiId,
+        onRecommendationAccept: (poiId) =>
+            received['recommendationAccept'] = poiId,
+        onRecommendationDismiss: (poiId) =>
+            received['recommendationDismiss'] = poiId,
+        onSuggestStopRequested: () =>
+            received['suggestStopRequested'] = true,
         onWaypointProgressRequest: ({
           required legIndex,
           required distanceMeters,
@@ -201,6 +240,15 @@ void main() {
       await simulateNative('poiTapped', {'poiId': 'poi_42'});
       expect(received['poiTapped'], 'poi_42');
 
+      await simulateNative('recommendationAccept', {'poiId': 'poi_99'});
+      expect(received['recommendationAccept'], 'poi_99');
+
+      await simulateNative('recommendationDismiss', {'poiId': 'poi_99'});
+      expect(received['recommendationDismiss'], 'poi_99');
+
+      await simulateNative('suggestStopRequested', null);
+      expect(received['suggestStopRequested'], true);
+
       final progress = await simulateNative('calculateWaypointProgress', {
         'legIndex': 0,
         'distanceMeters': 1000.0,
@@ -245,6 +293,9 @@ NavigationHostHandlers _throwingHandlers() => NavigationHostHandlers(
       onPopRoute: () => throw StateError('should not fire'),
       onRequestPoisOnMap: () => throw StateError('should not fire'),
       onPoiTapped: (_) => throw StateError('should not fire'),
+      onRecommendationAccept: (_) => throw StateError('should not fire'),
+      onRecommendationDismiss: (_) => throw StateError('should not fire'),
+      onSuggestStopRequested: () => throw StateError('should not fire'),
       onWaypointProgressRequest: ({
         required legIndex,
         required distanceMeters,

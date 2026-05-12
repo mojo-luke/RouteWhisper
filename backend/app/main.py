@@ -514,6 +514,11 @@ class UserProfilePayload(BaseModel):
     default_time_budget_minutes: Optional[int] = None
     dietary_restrictions: list[str] = Field(default_factory=list)
 
+    # Recommendation surface controls.
+    recommendations_enabled: bool = True
+    recommendations_max_per_trip: int = 3
+    recommendations_min_gap_minutes: int = 15
+
 
 async def _get_or_create_profile(user_id: str) -> UserProfile:
     profile = await UserProfile.find_one(UserProfile.user_id == user_id)
@@ -531,6 +536,9 @@ async def get_user_profile(user: CurrentUser = Depends(get_current_user)):
         preferred_poi_types=p.preferred_poi_types,
         default_time_budget_minutes=p.default_time_budget_minutes,
         dietary_restrictions=p.dietary_restrictions,
+        recommendations_enabled=p.recommendations_enabled,
+        recommendations_max_per_trip=p.recommendations_max_per_trip,
+        recommendations_min_gap_minutes=p.recommendations_min_gap_minutes,
     )
 
 
@@ -544,6 +552,9 @@ async def update_user_profile(
     p.preferred_poi_types = payload.preferred_poi_types
     p.default_time_budget_minutes = payload.default_time_budget_minutes
     p.dietary_restrictions = payload.dietary_restrictions
+    p.recommendations_enabled = payload.recommendations_enabled
+    p.recommendations_max_per_trip = payload.recommendations_max_per_trip
+    p.recommendations_min_gap_minutes = payload.recommendations_min_gap_minutes
     p.updated_at = datetime.utcnow()
     await p.save()
     return payload
