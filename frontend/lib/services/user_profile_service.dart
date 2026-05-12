@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'auth_service.dart';
+import 'authed_http.dart';
 
 /// A single user interest. See docs/recommendations-brief.md →
 /// "Personalization vocabulary". The `label` is user-facing; the other
@@ -118,9 +119,11 @@ class UserProfileService {
 
   static Future<UserProfile?> fetch() async {
     try {
-      final response = await http.get(
-        Uri.parse('$_baseUrl/user/profile'),
-        headers: _authedJsonHeaders(),
+      final response = await AuthedHttp.send(
+        () => http.get(
+          Uri.parse('$_baseUrl/user/profile'),
+          headers: _authedJsonHeaders(),
+        ),
       );
       if (response.statusCode != 200) {
         debugPrint('GET /user/profile: HTTP ${response.statusCode}');
@@ -135,10 +138,12 @@ class UserProfileService {
 
   static Future<UserProfile?> save(UserProfile profile) async {
     try {
-      final response = await http.put(
-        Uri.parse('$_baseUrl/user/profile'),
-        headers: _authedJsonHeaders(),
-        body: jsonEncode(profile.toJson()),
+      final response = await AuthedHttp.send(
+        () => http.put(
+          Uri.parse('$_baseUrl/user/profile'),
+          headers: _authedJsonHeaders(),
+          body: jsonEncode(profile.toJson()),
+        ),
       );
       if (response.statusCode != 200) {
         debugPrint('PUT /user/profile: HTTP ${response.statusCode} ${response.body}');

@@ -77,4 +77,25 @@ class AuthService {
 
   /// Bearer token to send on backend requests. Returns null when signed out.
   String? get accessToken => currentSession?.accessToken;
+
+  /// Try to refresh the current Supabase session. Returns true on success.
+  ///
+  /// On failure (network blip, refresh token expired, anything thrown),
+  /// signs the user out so the AuthGate routes them to the sign-in
+  /// screen. Without this, the app would keep hitting 401s silently —
+  /// worse UX than asking the user to re-auth.
+  Future<bool> tryRefresh() async {
+    try {
+      final response = await _client.auth.refreshSession();
+      return response.session != null;
+    } catch (e) {
+      debugPrint('Session refresh failed: $e. Signing out.');
+      try {
+        await signOut();
+      } catch (_) {
+        // signOut already best-effort; don't let cleanup throw.
+      }
+      return false;
+    }
+  }
 }

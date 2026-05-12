@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import 'auth_service.dart';
+import 'authed_http.dart';
 import 'navigation_service.dart';
 import 'poi_api_service.dart';
 
@@ -171,9 +172,6 @@ class RecommendationService extends ChangeNotifier {
       }
     }
 
-    final token = _tokenProvider();
-    if (token == null) return;
-
     // Build the EngineRequest envelope. See docs/recommendations-brief.md
     // → "Engine interface". Trip-scale is left null on the request — the
     // backend derives it from the polyline. Time-budget mode is currently
@@ -192,15 +190,25 @@ class RecommendationService extends ChangeNotifier {
       },
     };
 
-    try {
-      final response = await _httpClient.post(
+    // Headers are rebuilt inside the closure so a 401→refresh→retry
+    // picks up the rotated token. The token may have been null when we
+    // started (and the call would early-return) but after refresh it
+    // can become valid.
+    Future<http.Response> doSend() {
+      final token = _tokenProvider();
+      return _httpClient.post(
         Uri.parse('$_baseUrl/recommendations/stops'),
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token',
+          if (token != null) 'Authorization': 'Bearer $token',
         },
         body: jsonEncode(body),
       );
+    }
+    if (_tokenProvider() == null) return;
+
+    try {
+      final response = await AuthedHttp.send(doSend);
       if (response.statusCode != 200) {
         debugPrint('recommendations: HTTP ${response.statusCode}');
         return;

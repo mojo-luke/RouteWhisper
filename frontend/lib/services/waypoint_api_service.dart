@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../models/waypoint.dart';
 import 'auth_service.dart';
+import 'authed_http.dart';
 
 /// API client for waypoint-related backend operations
 ///
@@ -46,10 +47,12 @@ class WaypointApiService {
     try {
       print('📤 Sending stop history to backend...');
 
-      final response = await http.post(
-        Uri.parse('$baseUrl/waypoints/history'),
-        headers: _authedJsonHeaders(),
-        body: jsonEncode(payload),
+      final response = await AuthedHttp.send(
+        () => http.post(
+          Uri.parse('$baseUrl/waypoints/history'),
+          headers: _authedJsonHeaders(),
+          body: jsonEncode(payload),
+        ),
       );
 
       if (response.statusCode == 200) {
@@ -72,9 +75,11 @@ class WaypointApiService {
   /// or when not signed in.
   static Future<Map<String, Map<String, num>>?> getCategoryAverages() async {
     try {
-      final response = await http.get(
-        Uri.parse('$baseUrl/waypoints/category-averages'),
-        headers: _authedJsonHeaders(),
+      final response = await AuthedHttp.send(
+        () => http.get(
+          Uri.parse('$baseUrl/waypoints/category-averages'),
+          headers: _authedJsonHeaders(),
+        ),
       );
       if (response.statusCode != 200) {
         print('⚠️ category-averages: HTTP ${response.statusCode}');
@@ -100,9 +105,11 @@ class WaypointApiService {
   /// Stop counts by hour-of-day and day-of-week for the authenticated user.
   static Future<Map<String, dynamic>?> getTimePatterns() async {
     try {
-      final response = await http.get(
-        Uri.parse('$baseUrl/waypoints/time-patterns'),
-        headers: _authedJsonHeaders(),
+      final response = await AuthedHttp.send(
+        () => http.get(
+          Uri.parse('$baseUrl/waypoints/time-patterns'),
+          headers: _authedJsonHeaders(),
+        ),
       );
       if (response.statusCode != 200) {
         print('⚠️ time-patterns: HTTP ${response.statusCode}');
