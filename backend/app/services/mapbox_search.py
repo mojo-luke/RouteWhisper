@@ -239,6 +239,67 @@ class MapboxSearchService:
             logger.warning(f"Failed to convert Mapbox feature to POI: {e}")
             return None
 
+    async def forward_geocode(
+        self,
+        query: str,
+        proximity: Optional[Tuple[float, float]] = None,
+        limit: int = 5,
+    ) -> List[dict]:
+        """Forward-geocode a free-text query into address candidates.
+
+        Uses Mapbox Search Box `/forward` — single-shot lookup (no session
+        token), good enough for the trip wizard where the user pauses
+        between keystrokes. For high-frequency typeahead later, swap to
+        `/suggest` + `/retrieve` with a session token to lower billing.
+
+        Returns a list of `{name, full_address, lat, lng, place_type,
+        mapbox_id}` dicts, ranked by Mapbox.
+        """
+        if not query.strip():
+            return []
+
+        params = {
+            "access_token": self.access_token,
+            "q": query,
+            "limit": min(max(limit, 1), 10),
+        }
+        if proximity is not None:
+            # Mapbox expects lng,lat
+            params["proximity"] = f"{proximity[1]},{proximity[0]}"
+
+        url = f"{self.BASE_URL}/forward"
+        try:
+            response = await self.client.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                f"Mapbox geocode failed for '{query}': "
+                f"{e.response.status_code} - {e.response.text}"
+            )
+            return []
+        except Exception as e:
+            logger.error(f"Unexpected error geocoding '{query}': {e}")
+            return []
+
+        out: List[dict] = []
+        for feature in data.get("features", []):
+            props = feature.get("properties", {})
+            geom = feature.get("geometry", {})
+            coords = geom.get("coordinates", [])
+            if len(coords) != 2:
+                continue
+            lng, lat = coords
+            out.append({
+                "name": props.get("name") or props.get("name_preferred") or "",
+                "full_address": props.get("full_address") or props.get("place_formatted"),
+                "lat": lat,
+                "lng": lng,
+                "place_type": props.get("feature_type") or props.get("place_type"),
+                "mapbox_id": props.get("mapbox_id", ""),
+            })
+        return out
+
     async def search_multiple_categories(
         self,
         categories: List[POICategory],

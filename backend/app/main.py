@@ -745,6 +745,46 @@ async def get_poi_facts():
     """Get facts for specific POI - TODO: Implement in Step 4"""
     return {"message": "POI facts endpoint - Coming in Step 4"}
 
+
+class GeocodeCandidate(BaseModel):
+    name: str
+    full_address: Optional[str] = None
+    lat: float
+    lng: float
+    place_type: Optional[str] = None
+    mapbox_id: str = ""
+
+
+@app.get("/api/v1/geocode")
+async def geocode(
+    q: str,
+    proximity_lat: Optional[float] = None,
+    proximity_lng: Optional[float] = None,
+    limit: int = 5,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Forward-geocode a free-text query into address candidates.
+
+    Used by the trip-planner wizard's origin/destination pickers.
+    `proximity_lat`/`proximity_lng` bias results toward the user's region;
+    omit them and Mapbox falls back to global ranking. Authed so we keep
+    the geocode quota tied to logged-in users.
+    """
+    q = (q or "").strip()
+    if not q:
+        return {"candidates": []}
+
+    proximity = None
+    if proximity_lat is not None and proximity_lng is not None:
+        proximity = (proximity_lat, proximity_lng)
+
+    service = MapboxSearchService()
+    try:
+        results = await service.forward_geocode(q, proximity=proximity, limit=limit)
+    finally:
+        await service.close()
+    return {"candidates": [GeocodeCandidate(**r).model_dump() for r in results]}
+
 class EngineContext(BaseModel):
     """Per-request context describing *where and when* the call is happening.
     See docs/recommendations-brief.md → 'Engine interface'."""

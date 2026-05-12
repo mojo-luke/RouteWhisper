@@ -2,15 +2,13 @@ import 'package:flutter/material.dart';
 
 import '../models/trip.dart';
 import '../services/trip_service.dart';
+import 'new_trip_wizard.dart';
 import 'trip_detail_screen.dart';
 
 /// "My Trips" — the list of trips the user has saved. Empty state on
-/// first load. Tap a trip to open its detail screen (slice C will build
-/// out the canvas there; slice A shows a placeholder).
-///
-/// The new-trip wizard is slice B; for now, this screen has a "New
-/// trip" FAB that creates a placeholder Trip via the API so the
-/// persistence path is exercisable end-to-end.
+/// first load. Tap a trip to open its detail screen. The "New trip"
+/// FAB opens the wizard (slice B); after a successful create we push
+/// the detail screen so the user lands on the trip they just made.
 class MyTripsScreen extends StatefulWidget {
   const MyTripsScreen({super.key});
 
@@ -20,7 +18,6 @@ class MyTripsScreen extends StatefulWidget {
 
 class _MyTripsScreenState extends State<MyTripsScreen> {
   bool _loading = true;
-  bool _creating = false;
   List<Trip> _trips = const [];
 
   @override
@@ -39,31 +36,16 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
     });
   }
 
-  /// Placeholder until slice B's wizard ships: creates a minimal trip
-  /// at SF → LA with default constraints. Lets us exercise the full
-  /// list/create/detail loop today.
-  Future<void> _createPlaceholderTrip() async {
-    setState(() => _creating = true);
-    final draft = Trip(
-      name: 'New trip ${DateTime.now().toIso8601String().substring(0, 16)}',
-      originName: 'Current location',
-      originLat: 37.7749,
-      originLng: -122.4194,
-      destinationName: 'Destination',
-      destinationLat: 34.0522,
-      destinationLng: -118.2437,
+  /// Open the new-trip wizard. On a successful create, the wizard pops
+  /// with the saved trip; we then push the detail screen so the user
+  /// keeps editing in context instead of bouncing back to the list.
+  Future<void> _openWizard() async {
+    final created = await Navigator.of(context).push<Trip>(
+      MaterialPageRoute(builder: (_) => const NewTripWizardScreen()),
     );
-    final saved = await TripService.create(draft);
-    if (!mounted) return;
-    setState(() => _creating = false);
-    if (saved == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Failed to create trip')),
-      );
-      return;
-    }
+    if (!mounted || created == null) return;
     await Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => TripDetailScreen(trip: saved),
+      builder: (_) => TripDetailScreen(trip: created),
     ));
     _refresh();
   }
@@ -100,17 +82,8 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
                   ),
                 ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: _creating ? null : _createPlaceholderTrip,
-        icon: _creating
-            ? const SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: Colors.white,
-                ),
-              )
-            : const Icon(Icons.add),
+        onPressed: _openWizard,
+        icon: const Icon(Icons.add),
         label: const Text('New trip'),
       ),
     );
