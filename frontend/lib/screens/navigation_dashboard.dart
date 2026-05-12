@@ -5,6 +5,7 @@ import 'preferences_screen.dart';
 import '../services/navigation_service.dart';
 import '../services/user_profile_service.dart';
 import '../widgets/budget_pill.dart';
+import '../widgets/narration_card.dart';
 import '../widgets/route_input_dialog.dart';
 import '../widgets/poi_dashboard.dart';
 import '../widgets/waypoint_list.dart';
@@ -142,7 +143,14 @@ class _NavigationDashboardState extends State<NavigationDashboard> {
             children: [
               // Status Card
               _buildStatusCard(currentState, statusMessage),
-              const SizedBox(height: 32),
+              const SizedBox(height: 16),
+
+              // Phase 1 narration: visible whenever a whisper is live.
+              // Renders an empty SizedBox when there's no active narration,
+              // so the layout doesn't jump when one arrives.
+              const NarrationCard(),
+
+              const SizedBox(height: 16),
 
               // Navigation Controls
               Expanded(child: _buildNavigationControls(currentState, waypoints)),

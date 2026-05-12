@@ -123,6 +123,13 @@ class MapActivity : AppCompatActivity() {
         speechApi.clean(value)
     }
 
+    // Narration cleanup callback. Different from the turn-by-turn one
+    // because we DON'T call speechApi.clean() — narration announcements
+    // weren't generated through speechApi, so cleaning them would log
+    // an error or no-op. Keeping this empty consumer makes the play()
+    // call signature symmetric with the turn-instruction path.
+    private val narrationPlayerCallback = MapboxNavigationConsumer<SpeechAnnouncement> { /* no-op */ }
+
     // Recenter button for manual camera control
     private lateinit var recenterButton: FloatingActionButton
     private var isUserControllingCamera = false
@@ -552,6 +559,13 @@ class MapActivity : AppCompatActivity() {
 
                 // Check departure conditions if monitoring
                 checkDepartureConditions(location)
+
+                // Phase 1 narration: push the fix to Flutter so the
+                // NarrationService can fire a whisper when we're close
+                // to a fact. Mapbox emits speed in m/s; convert to mph
+                // for Flutter's UX-facing threshold.
+                val mph = location.speed?.let { it * 2.236936 } ?: 0.0
+                MainActivity.sendLocationUpdate(location.latitude, location.longitude, mph)
             }
         })
 
@@ -1210,6 +1224,31 @@ class MapActivity : AppCompatActivity() {
     private fun hideRecommendationBanner() {
         currentRecommendationPoiId = null
         recommendationCard.visibility = View.GONE
+    }
+
+    /**
+     * Phase 1 narration: speak arbitrary text via the Mapbox voice player.
+     *
+     * We piggyback on MapboxVoiceInstructionsPlayer rather than spinning up a
+     * separate Android TextToSpeech engine so that turn-by-turn instructions
+     * and our narration share one audio-focus owner. Turn-by-turn voice still
+     * preempts because both go through the same player queue, and the SDK
+     * prioritizes instruction announcements.
+     *
+     * Synthesizes a SpeechAnnouncement directly (no speechApi.generate()
+     * round-trip) so we can speak plain narration text without needing a
+     * VoiceInstructions object. Skips clean() in the callback since this
+     * announcement wasn't generated through speechApi and doesn't have a
+     * cached audio file to release.
+     */
+    fun speakNarration(text: String) {
+        if (!::voiceInstructionsPlayer.isInitialized) {
+            Log.d(TAG, "speakNarration: voice player not yet initialized; dropping")
+            return
+        }
+        val announcement = SpeechAnnouncement.Builder(text).build()
+        voiceInstructionsPlayer.play(announcement, narrationPlayerCallback)
+        Log.d(TAG, "🗣️ Narration spoken: \"${text.take(80)}...\"")
     }
 
     /** Mirrors the emoji set on the Flutter POI model. */

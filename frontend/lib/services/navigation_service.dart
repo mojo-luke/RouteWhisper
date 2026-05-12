@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'narration_service.dart';
 import 'navigation_controller.dart';
 import 'poi_api_service.dart';
 import 'recommendation_service.dart';
@@ -35,6 +36,7 @@ class NavigationService {
   static final POIApiService _poiApi = POIApiService();
   static final WaypointManager _waypointManager = WaypointManager();
   static final RecommendationService _recommendations = RecommendationService();
+  static final NarrationService _narration = NarrationService();
 
   // Current route info
   static RouteInfo? _currentRoute;
@@ -84,6 +86,9 @@ class NavigationService {
 
   // Recommendation getter — same singleton the Provider exposes.
   static RecommendationService get recommendations => _recommendations;
+
+  // Narration getter — Phase 1 Whisper. Same singleton everywhere.
+  static NarrationService get narration => _narration;
   static bool get hasWaypoints => _waypointManager.hasIntermediateWaypoints();
   static Waypoint? get activeWaypoint => _activeWaypoint;
 

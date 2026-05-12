@@ -47,7 +47,11 @@ class NavigationController extends ChangeNotifier {
       onRecommendationDismiss: _onRecommendationDismiss,
       onSuggestStopRequested: _onSuggestStopRequested,
       onWaypointProgressRequest: _onWaypointProgressRequest,
+      onLocationUpdate: _onLocationUpdate,
     ));
+    // Bind the narration service to the same bridge so its
+    // speakNarration calls hit the same native handler.
+    NavigationService.narration.bindBridge(_bridge);
     debugPrint('🎯 NavigationController initialized');
   }
 
@@ -145,7 +149,23 @@ class NavigationController extends ChangeNotifier {
 
   void _onRoutePolyline(String polyline) {
     NavigationService.setRoutePolyline(polyline);
+    // Phase 1 narration: kick off the fact fetch as soon as we have
+    // a route. The NarrationService will quietly load + queue facts;
+    // location updates do the rest.
+    NavigationService.narration.startTrip(polyline);
     notifyListeners();
+  }
+
+  void _onLocationUpdate({
+    required double latitude,
+    required double longitude,
+    required double speedMph,
+  }) {
+    NavigationService.narration.onLocationUpdate(
+      latitude: latitude,
+      longitude: longitude,
+      speedMph: speedMph,
+    );
   }
 
   void _onWaypointArrived({

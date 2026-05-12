@@ -742,8 +742,203 @@ async def delete_trip(
 
 @app.get("/api/v1/poi/facts")
 async def get_poi_facts():
-    """Get facts for specific POI - TODO: Implement in Step 4"""
-    return {"message": "POI facts endpoint - Coming in Step 4"}
+    """Legacy stub from pre-Phase-1. The real narration endpoint is
+    `/api/v1/route/facts` — see RouteFactsRequest below."""
+    return {"message": "Use /api/v1/route/facts (Phase 1 narration)"}
+
+
+class RouteFactsRequest(BaseModel):
+    """Body for `/api/v1/route/facts`. Polyline is the Mapbox-encoded
+    geometry of the planned drive (precision 6, as Mapbox Navigation
+    SDK emits). `user_interests` defaults to the caller's profile when
+    omitted — pass it explicitly for testing or to override."""
+    polyline: str
+    user_interests: Optional[list[dict]] = None
+
+
+class RouteFact(BaseModel):
+    """One whisper-ready fact returned to the client."""
+    lat: float
+    lng: float
+    article_title: str
+    article_url: str
+    wikipedia_pageid: int
+    primary: str
+    follow_ups: list[str] = []
+    is_thin: bool = False
+    distance_from_route_miles: float
+    ranked_score: float
+
+
+# Redis TTL for the per-route response cache. Wikipedia content
+# doesn't churn often; users re-driving the same trip within a week
+# hit cache. After a week we let it expire just in case a referenced
+# article was revised.
+_ROUTE_FACTS_TTL_SECONDS = 7 * 24 * 60 * 60
+
+
+@app.post("/api/v1/route/facts")
+async def route_facts(
+    body: RouteFactsRequest,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Phase 1 narration endpoint.
+
+    Pipeline:
+      1. Decode polyline + Wikipedia GeoSearch around sample points
+         (services/wikipedia_facts.py)
+      2. Rank candidates and pick top-N (services/fact_ranker.py)
+      3. For each kept article, check POIContent cache; if miss,
+         call LLM summarizer and persist the result
+         (services/llm_summarizer.py)
+      4. Cache the assembled response in Redis keyed by polyline hash
+
+    Returns a `{facts: [RouteFact, ...]}` envelope. The client's
+    NarrationService consumes this and triggers narration on GPS
+    proximity.
+    """
+    from app.services.wikipedia_facts import WikipediaFactsService
+    from app.services.fact_ranker import rank_candidates
+    from app.services.llm_summarizer import LLMSummarizer
+    import hashlib
+    import json
+    import asyncio
+
+    polyline = (body.polyline or "").strip()
+    if not polyline:
+        return {"facts": []}
+
+    # Redis cache: per-route. Keyed by polyline hash + interests
+    # hash, so a different user with different interests gets a
+    # different cached envelope.
+    interests = body.user_interests
+    if interests is None:
+        profile = await UserProfile.find_one(UserProfile.user_id == user.id)
+        interests = list(profile.interests) if profile else []
+
+    route_key = _route_facts_cache_key(polyline, interests)
+    redis = await get_redis()
+    cached = await redis.get(route_key)
+    if cached:
+        try:
+            return {"facts": json.loads(cached)}
+        except json.JSONDecodeError:
+            # Corrupt cache — log and rebuild rather than fail.
+            logger.warning("route facts cache corrupt for %s; rebuilding", route_key)
+
+    # 1) Discovery
+    wiki = WikipediaFactsService()
+    try:
+        candidates = await wiki.geosearch_along_polyline(polyline)
+    finally:
+        await wiki.close()
+    if not candidates:
+        await redis.set(route_key, "[]", ex=_ROUTE_FACTS_TTL_SECONDS)
+        return {"facts": []}
+
+    # 2) Rank + cap
+    ranked = rank_candidates(candidates, user_interests=interests)
+    if not ranked:
+        await redis.set(route_key, "[]", ex=_ROUTE_FACTS_TTL_SECONDS)
+        return {"facts": []}
+
+    # 3) Per-article summarization with POIContent cache
+    summarizer = LLMSummarizer()
+    facts_out: list[dict] = []
+    # Summarize in parallel via to_thread (Anthropic SDK is sync).
+    # Bounded concurrency so we don't spike costs or rate limits.
+    sem = asyncio.Semaphore(4)
+
+    async def _process(ranked_fact):
+        c = ranked_fact.candidate
+        async with sem:
+            bundle = await _get_or_summarize(summarizer, c)
+        return {
+            "lat": c.lat,
+            "lng": c.lng,
+            "article_title": c.title,
+            "article_url": c.url,
+            "wikipedia_pageid": c.wikipedia_pageid,
+            "primary": bundle["primary"],
+            "follow_ups": bundle["follow_ups"],
+            "is_thin": bundle["is_thin"],
+            "distance_from_route_miles": c.distance_from_route_miles,
+            "ranked_score": ranked_fact.score,
+        }
+
+    facts_out = await asyncio.gather(*[_process(r) for r in ranked])
+
+    # 4) Cache the assembled envelope
+    await redis.set(
+        route_key,
+        json.dumps(facts_out),
+        ex=_ROUTE_FACTS_TTL_SECONDS,
+    )
+    return {"facts": facts_out}
+
+
+def _route_facts_cache_key(polyline: str, interests: list[dict]) -> str:
+    """Redis key for the per-route response cache. Polyline hash +
+    interests hash so users with different tastes get different
+    cached responses for the same route."""
+    import hashlib
+    h = hashlib.sha1()
+    h.update(polyline.encode())
+    # Interests are dicts; canonical JSON makes the hash stable
+    # regardless of dict key order.
+    h.update(json.dumps(interests, sort_keys=True, default=str).encode()
+             if interests else b"[]")
+    return f"route_facts:v1:{h.hexdigest()}"
+
+
+async def _get_or_summarize(summarizer, candidate) -> dict:
+    """POIContent-level cache: keyed by wikipedia_pageid. Hits across
+    users and routes. On miss, call the LLM and persist."""
+    import asyncio
+    from app.database import POIContent
+    pageid = candidate.wikipedia_pageid
+
+    existing = await POIContent.find_one(POIContent.poi_id == f"wiki:{pageid}")
+    if existing and existing.facts:
+        # Stored shape: facts[0] is the SummaryBundle dict.
+        first = existing.facts[0] if isinstance(existing.facts[0], dict) else {}
+        if "primary" in first:
+            return {
+                "primary": first.get("primary", ""),
+                "follow_ups": first.get("follow_ups", []),
+                "is_thin": bool(first.get("is_thin", False)),
+            }
+
+    # Cache miss — invoke the LLM. The SDK is sync; offload to a
+    # worker thread so we don't block the event loop.
+    bundle = await asyncio.to_thread(
+        summarizer.summarize_article,
+        candidate.title,
+        candidate.extract,
+    )
+
+    # Persist back to POIContent for future trips.
+    doc = existing or POIContent(
+        poi_id=f"wiki:{pageid}",
+        name=candidate.title,
+        category="wikipedia",
+        latitude=candidate.lat,
+        longitude=candidate.lng,
+        metadata={"source": "wikipedia", "pageid": pageid, "url": candidate.url},
+    )
+    doc.facts = [{
+        "primary": bundle.primary,
+        "follow_ups": bundle.follow_ups,
+        "is_thin": bundle.is_thin,
+    }]
+    doc.metadata = {**(doc.metadata or {}), "wikipedia_pageid": pageid}
+    await doc.save()
+
+    return {
+        "primary": bundle.primary,
+        "follow_ups": bundle.follow_ups,
+        "is_thin": bundle.is_thin,
+    }
 
 
 class GeocodeCandidate(BaseModel):

@@ -41,6 +41,7 @@ class FakeNavigationHostBridge implements NavigationHostBridge {
   Object? clearBudgetStatusError;
   Object? setRecommendationError;
   Object? clearRecommendationError;
+  Object? speakNarrationError;
 
   NavigationHostHandlers? _handlers;
 
@@ -221,6 +222,16 @@ class FakeNavigationHostBridge implements NavigationHostBridge {
     }
   }
 
+  @override
+  Future<void> speakNarration({required String text}) async {
+    sentCalls.add(RecordedCall('speakNarration', {'text': text}));
+    final err = speakNarrationError;
+    if (err != null) {
+      speakNarrationError = null;
+      throw err;
+    }
+  }
+
   // --- Inbound (Native → Flutter): one emit per NavigationHostHandlers field ---
   //
   // If a new handler is added to NavigationHostHandlers, add the matching
@@ -296,6 +307,18 @@ class FakeNavigationHostBridge implements NavigationHostBridge {
       legIndex: legIndex,
       distanceMeters: distanceMeters,
       durationSeconds: durationSeconds,
+    );
+  }
+
+  void emitLocationUpdate({
+    required double latitude,
+    required double longitude,
+    required double speedMph,
+  }) {
+    _requireHandlers().onLocationUpdate(
+      latitude: latitude,
+      longitude: longitude,
+      speedMph: speedMph,
     );
   }
 

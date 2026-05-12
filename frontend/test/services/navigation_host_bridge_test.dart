@@ -194,6 +194,12 @@ void main() {
           ];
           return {'name': 'Test', 'distanceFormatted': '1.0'};
         },
+        onLocationUpdate: ({
+          required latitude,
+          required longitude,
+          required speedMph,
+        }) =>
+            received['locationUpdate'] = [latitude, longitude, speedMph],
       ));
 
       // Send each native→Flutter call through the channel and verify
@@ -256,6 +262,13 @@ void main() {
       });
       expect(received['waypointProgressRequest'], [0, 1000.0, 60.0]);
       expect(progress, {'name': 'Test', 'distanceFormatted': '1.0'});
+
+      await simulateNative('locationUpdate', {
+        'latitude': 37.5,
+        'longitude': -122.3,
+        'speedMph': 45.0,
+      });
+      expect(received['locationUpdate'], [37.5, -122.3, 45.0]);
     });
 
     test('unknown inbound method does not crash and returns null', () async {
@@ -300,6 +313,12 @@ NavigationHostHandlers _throwingHandlers() => NavigationHostHandlers(
         required legIndex,
         required distanceMeters,
         required durationSeconds,
+      }) =>
+          throw StateError('should not fire'),
+      onLocationUpdate: ({
+        required latitude,
+        required longitude,
+        required speedMph,
       }) =>
           throw StateError('should not fire'),
     );

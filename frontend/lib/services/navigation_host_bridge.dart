@@ -102,6 +102,14 @@ abstract class NavigationHostBridge {
   /// Clear the native recommendation banner (no current suggestion).
   Future<void> clearRecommendation();
 
+  /// Speak [text] using the native voice player.
+  ///
+  /// Phase 1 narration: routes through `MapboxVoiceInstructionsPlayer` so
+  /// it shares audio-focus management with turn-by-turn voice (no fighting
+  /// over the speaker; turn-by-turn always preempts).
+  /// **Native effect:** Mapbox player.play() with the given text.
+  Future<void> speakNarration({required String text});
+
   /// Register the inbound-event handlers. Native invokes these via the
   /// underlying transport (method channel) and the bridge dispatches to the
   /// matching field on [handlers]. Calling [setHandlers] again replaces the
@@ -188,6 +196,17 @@ class NavigationHostHandlers {
     required double durationSeconds,
   }) onWaypointProgressRequest;
 
+  /// Native pushes the current vehicle location at the cadence Mapbox's
+  /// location observer fires (typically every ~1s while driving). Used
+  /// by NarrationService to trigger whispers on proximity to facts.
+  /// Speed is mph, may be 0 when stopped.
+  /// **Native trigger:** `MapActivity` Mapbox `LocationObserver`.
+  final void Function({
+    required double latitude,
+    required double longitude,
+    required double speedMph,
+  }) onLocationUpdate;
+
   const NavigationHostHandlers({
     required this.onRoutePolyline,
     required this.onWaypointArrived,
@@ -201,6 +220,7 @@ class NavigationHostHandlers {
     required this.onRecommendationDismiss,
     required this.onSuggestStopRequested,
     required this.onWaypointProgressRequest,
+    required this.onLocationUpdate,
   });
 }
 
@@ -328,6 +348,11 @@ class MethodChannelNavigationHostBridge implements NavigationHostBridge {
   }
 
   @override
+  Future<void> speakNarration({required String text}) async {
+    await _channel.invokeMethod('speakNarration', {'text': text});
+  }
+
+  @override
   void setHandlers(NavigationHostHandlers handlers) {
     _handlers = handlers;
   }
@@ -402,6 +427,15 @@ class MethodChannelNavigationHostBridge implements NavigationHostBridge {
           distanceMeters: (data['distanceMeters'] as num).toDouble(),
           durationSeconds: (data['durationSeconds'] as num).toDouble(),
         );
+
+      case 'locationUpdate':
+        final data = Map<String, dynamic>.from(call.arguments as Map);
+        h.onLocationUpdate(
+          latitude: (data['latitude'] as num).toDouble(),
+          longitude: (data['longitude'] as num).toDouble(),
+          speedMph: (data['speedMph'] as num).toDouble(),
+        );
+        return null;
     }
     return null;
   }

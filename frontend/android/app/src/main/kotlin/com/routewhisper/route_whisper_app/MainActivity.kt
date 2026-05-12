@@ -55,6 +55,20 @@ class MainActivity : FlutterActivity() {
             ))
             Log.d("MainActivity", "Sent destination arrival to Flutter")
         }
+
+        /**
+         * Forward each GPS fix to Flutter so the NarrationService can decide
+         * whether to whisper a fact about a nearby place. Fires at the cadence
+         * Mapbox's LocationObserver emits (roughly 1 Hz during driving) — no
+         * per-side throttling needed at v1.
+         */
+        fun sendLocationUpdate(latitude: Double, longitude: Double, speedMph: Double) {
+            methodChannelInstance?.invokeMethod("locationUpdate", mapOf(
+                "latitude" to latitude,
+                "longitude" to longitude,
+                "speedMph" to speedMph,
+            ))
+        }
     }
 
     // Use the shared FlutterEngine created by RouteWhisperApplication
@@ -91,6 +105,7 @@ class MainActivity : FlutterActivity() {
                 "clearBudgetStatus" -> handleClearBudgetStatus(result)
                 "setRecommendation" -> handleSetRecommendation(call, result)
                 "clearRecommendation" -> handleClearRecommendation(result)
+                "speakNarration" -> handleSpeakNarration(call, result)
                 else -> result.notImplemented()
             }
         }
@@ -278,6 +293,35 @@ class MainActivity : FlutterActivity() {
 
     private fun handleClearRecommendation(result: MethodChannel.Result) {
         MapActivity.currentInstance?.clearRecommendationUi()
+        result.success(null)
+    }
+
+    /**
+     * Speak arbitrary narration text via the Mapbox voice player.
+     *
+     * Phase 1 narration: reuses the same MapboxVoiceInstructionsPlayer the
+     * turn-by-turn voice uses. That shares audio focus with the nav voice
+     * (no fighting over the speaker), and per the Mapbox SDK doc page on
+     * voice instructions the player handles ducking/queuing internally —
+     * turn-by-turn announcements take priority by virtue of being queued
+     * by the same player on the same channel.
+     */
+    private fun handleSpeakNarration(call: MethodCall, result: MethodChannel.Result) {
+        val text = call.argument<String>("text")
+        if (text.isNullOrBlank()) {
+            result.error("INVALID_ARGS", "Missing text", null)
+            return
+        }
+        val activity = MapActivity.currentInstance
+        if (activity == null) {
+            // Quietly succeed — narration isn't load-bearing and the user
+            // may have backed out of nav. Don't surface this as a Flutter
+            // error or it'll spam logs.
+            Log.d("MainActivity", "speakNarration: no MapActivity; silently dropping")
+            result.success(null)
+            return
+        }
+        activity.speakNarration(text)
         result.success(null)
     }
 
