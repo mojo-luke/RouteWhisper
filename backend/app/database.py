@@ -249,6 +249,15 @@ class UserProfile(Document):
     default_time_budget_minutes: Optional[int] = None
     dietary_restrictions: list = []
 
+    # Specific interests — the heavier-weight personalization layer
+    # described in docs/recommendations-brief.md. Each entry is a dict
+    # `{label, mapbox_categories, keywords}`. The `label` is what the
+    # user typed/picked; the other two fields drive Mapbox query
+    # expansion. Free-text labels start with empty `mapbox_categories`
+    # and `keywords`; the LLM-normalization step populates them at
+    # profile-save (see Task #7).
+    interests: list = []
+
     # Step 7 — recommendation surface settings. Defaults match the
     # frontend `_default*` constants for the production build; users can
     # adjust each independently in the preferences screen.

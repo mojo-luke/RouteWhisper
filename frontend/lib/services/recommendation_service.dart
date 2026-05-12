@@ -162,11 +162,22 @@ class RecommendationService extends ChangeNotifier {
     final token = AuthService.instance.accessToken;
     if (token == null) return;
 
+    // Build the EngineRequest envelope. See docs/recommendations-brief.md
+    // → "Engine interface". Trip-scale is left null on the request — the
+    // backend derives it from the polyline. Time-budget mode is currently
+    // hard-coded to 'moderate'; per-trip override comes when the planning
+    // surface exists.
     final remaining =
         NavigationService.waypointManager.remainingBudgetMinutes;
     final body = <String, dynamic>{
-      'encoded_polyline': polyline,
-      if (remaining != null) 'remaining_budget_minutes': remaining,
+      'context': <String, dynamic>{
+        'route_polyline': polyline,
+        if (remaining != null) 'minutes_remaining': remaining,
+        'time_budget_mode': 'moderate',
+      },
+      'intent': <String, dynamic>{
+        'invocation': bypassCaps ? 'manual' : 'auto',
+      },
     };
 
     try {

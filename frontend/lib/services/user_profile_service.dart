@@ -3,12 +3,44 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'auth_service.dart';
 
+/// A single user interest. See docs/recommendations-brief.md →
+/// "Personalization vocabulary". The `label` is user-facing; the other
+/// two fields drive Mapbox query expansion when the engine consults
+/// interests. Free-text labels start with empty arrays pending
+/// LLM-normalization at profile-save (see backend Task #7).
+@immutable
+class UserInterest {
+  final String label;
+  final List<String> mapboxCategories;
+  final List<String> keywords;
+
+  const UserInterest({
+    required this.label,
+    this.mapboxCategories = const [],
+    this.keywords = const [],
+  });
+
+  factory UserInterest.fromJson(Map<String, dynamic> json) => UserInterest(
+        label: json['label'] as String,
+        mapboxCategories:
+            (json['mapbox_categories'] as List? ?? const []).cast<String>(),
+        keywords: (json['keywords'] as List? ?? const []).cast<String>(),
+      );
+
+  Map<String, dynamic> toJson() => {
+        'label': label,
+        'mapbox_categories': mapboxCategories,
+        'keywords': keywords,
+      };
+}
+
 /// In-memory representation of `/api/v1/user/profile`.
 @immutable
 class UserProfile {
   final List<String> preferredPoiTypes;
   final int? defaultTimeBudgetMinutes;
   final List<String> dietaryRestrictions;
+  final List<UserInterest> interests;
 
   // Recommendation surface controls — mirror server-side fields.
   final bool recommendationsEnabled;
@@ -19,6 +51,7 @@ class UserProfile {
     this.preferredPoiTypes = const [],
     this.defaultTimeBudgetMinutes,
     this.dietaryRestrictions = const [],
+    this.interests = const [],
     this.recommendationsEnabled = true,
     this.recommendationsMaxPerTrip = 3,
     this.recommendationsMinGapMinutes = 15,
@@ -30,6 +63,10 @@ class UserProfile {
         defaultTimeBudgetMinutes: json['default_time_budget_minutes'] as int?,
         dietaryRestrictions:
             (json['dietary_restrictions'] as List? ?? const []).cast<String>(),
+        interests: ((json['interests'] as List?) ?? const [])
+            .cast<Map<String, dynamic>>()
+            .map(UserInterest.fromJson)
+            .toList(),
         recommendationsEnabled:
             (json['recommendations_enabled'] as bool?) ?? true,
         recommendationsMaxPerTrip:
@@ -42,6 +79,7 @@ class UserProfile {
         'preferred_poi_types': preferredPoiTypes,
         'default_time_budget_minutes': defaultTimeBudgetMinutes,
         'dietary_restrictions': dietaryRestrictions,
+        'interests': interests.map((i) => i.toJson()).toList(),
         'recommendations_enabled': recommendationsEnabled,
         'recommendations_max_per_trip': recommendationsMaxPerTrip,
         'recommendations_min_gap_minutes': recommendationsMinGapMinutes,
@@ -52,6 +90,7 @@ class UserProfile {
     int? defaultTimeBudgetMinutes,
     bool clearTimeBudget = false,
     List<String>? dietaryRestrictions,
+    List<UserInterest>? interests,
     bool? recommendationsEnabled,
     int? recommendationsMaxPerTrip,
     int? recommendationsMinGapMinutes,
@@ -62,6 +101,7 @@ class UserProfile {
             ? null
             : (defaultTimeBudgetMinutes ?? this.defaultTimeBudgetMinutes),
         dietaryRestrictions: dietaryRestrictions ?? this.dietaryRestrictions,
+        interests: interests ?? this.interests,
         recommendationsEnabled:
             recommendationsEnabled ?? this.recommendationsEnabled,
         recommendationsMaxPerTrip:

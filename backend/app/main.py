@@ -26,7 +26,12 @@ from app.models import POIRequest, POIResponse, POICategory, WaypointStopHistory
 from app.services.mapbox_search import MapboxSearchService
 from app.services.poi_ranking import POIRankingService
 from app.services.cache import POICacheService
-from app.utils.polyline import decode_polyline, calculate_bounds
+from app.utils.polyline import (
+    calculate_bounds,
+    decode_polyline,
+    detect_trip_scale,
+    TripScale,
+)
 
 # Auth + persistence
 from app.auth import CurrentUser, get_current_user
@@ -37,7 +42,11 @@ from app.database import (
 )
 
 # Recommendations
-from app.services.stop_recommendations import rank_suggestions
+from app.services.stop_recommendations import (
+    Invocation,
+    TimeBudgetMode,
+    rank_suggestions,
+)
 
 # Global Redis client
 redis_client = None
@@ -508,11 +517,27 @@ async def waypoint_time_patterns(
 # User profile
 # =============================================================================
 
+class InterestPayload(BaseModel):
+    """Wire shape for a single user interest. See
+    docs/recommendations-brief.md → 'Personalization vocabulary'.
+
+    `label` is what the user typed or picked. `mapbox_categories` and
+    `keywords` are what the engine uses for query expansion; they may
+    be empty for raw free-text entries pending LLM normalization.
+    """
+    label: str
+    mapbox_categories: list[str] = Field(default_factory=list)
+    keywords: list[str] = Field(default_factory=list)
+
+
 class UserProfilePayload(BaseModel):
     """Wire shape for GET/PUT /user/profile."""
     preferred_poi_types: list[str] = Field(default_factory=list)
     default_time_budget_minutes: Optional[int] = None
     dietary_restrictions: list[str] = Field(default_factory=list)
+
+    # Specific interests — heavier personalization signal than categories.
+    interests: list[InterestPayload] = Field(default_factory=list)
 
     # Recommendation surface controls.
     recommendations_enabled: bool = True
@@ -536,6 +561,7 @@ async def get_user_profile(user: CurrentUser = Depends(get_current_user)):
         preferred_poi_types=p.preferred_poi_types,
         default_time_budget_minutes=p.default_time_budget_minutes,
         dietary_restrictions=p.dietary_restrictions,
+        interests=[InterestPayload(**i) for i in (p.interests or [])],
         recommendations_enabled=p.recommendations_enabled,
         recommendations_max_per_trip=p.recommendations_max_per_trip,
         recommendations_min_gap_minutes=p.recommendations_min_gap_minutes,
@@ -552,6 +578,7 @@ async def update_user_profile(
     p.preferred_poi_types = payload.preferred_poi_types
     p.default_time_budget_minutes = payload.default_time_budget_minutes
     p.dietary_restrictions = payload.dietary_restrictions
+    p.interests = [i.model_dump() for i in payload.interests]
     p.recommendations_enabled = payload.recommendations_enabled
     p.recommendations_max_per_trip = payload.recommendations_max_per_trip
     p.recommendations_min_gap_minutes = payload.recommendations_min_gap_minutes
@@ -564,52 +591,101 @@ async def get_poi_facts():
     """Get facts for specific POI - TODO: Implement in Step 4"""
     return {"message": "POI facts endpoint - Coming in Step 4"}
 
-class StopRecommendationsRequest(BaseModel):
-    encoded_polyline: str
-    remaining_budget_minutes: Optional[int] = None
-    categories: Optional[list[POICategory]] = None
-    corridor_radius_miles: float = 5.0
+class EngineContext(BaseModel):
+    """Per-request context describing *where and when* the call is happening.
+    See docs/recommendations-brief.md → 'Engine interface'."""
+    route_polyline: Optional[str] = None
+    current_location: Optional[list[float]] = None  # [lat, lng]
+    minutes_into_trip: Optional[int] = None
+    minutes_remaining: Optional[int] = None
+    hours_since_last_stop: Optional[float] = None
+    fuel_state: Optional[str] = None  # placeholder
+    time_budget_mode: str = "moderate"  # hurry | moderate | discovery
+    # `trip_scale` is optional in the request; the backend derives it from
+    # `route_polyline` if missing.
+    trip_scale: Optional[str] = None
+
+
+class EngineIntent(BaseModel):
+    """What the caller is asking for. Defaults express a passive auto-poll
+    invocation; manual / planning / voice callers MUST set `invocation`."""
+    invocation: str = "auto"  # auto | manual | planning | voice
+    desired_categories: Optional[list[str]] = None
+    desired_interests: Optional[list[dict]] = None
+    constraints: Optional[dict] = None
+    natural_language_query: Optional[str] = None
+
+
+class EngineRequest(BaseModel):
+    """Top-level engine request envelope."""
+    context: EngineContext
+    intent: EngineIntent = Field(default_factory=EngineIntent)
 
 
 @app.post("/api/v1/recommendations/stops")
 async def get_stop_recommendations(
-    request: StopRecommendationsRequest,
+    request: EngineRequest,
     user: CurrentUser = Depends(get_current_user),
 ):
-    """Proactive stop suggestions during navigation.
+    """Proactive stop suggestions following the engine interface defined
+    in docs/recommendations-brief.md.
 
     Pipeline:
-      1. Reuse the POI discovery flow (cache + Mapbox + ranking) restricted
-         to the user's preferred categories (or supplied filter).
-      2. Pull the caller's stop-history aggregates from MongoDB.
-      3. Score each candidate via `rank_suggestions` using profile + history
-         + remaining budget + current time-of-day.
-      4. Return top 1–3 with a reason string for each.
+      1. Derive trip scale (use request value if supplied, else from route).
+      2. Pull profile (preferred categories + interests).
+      3. Determine which Mapbox categories to search (intent override >
+         profile interests > profile categories > defaults).
+      4. Run POI discovery along the route.
+      5. Pull stop-history aggregates from MongoDB.
+      6. Score with the four-dimension engine.
+      7. Return top suggestions.
     """
-    profile = await UserProfile.find_one(UserProfile.user_id == user.id)
-    preferred = profile.preferred_poi_types if profile else []
+    if request.context.route_polyline is None:
+        return {"suggestions": []}
 
-    # Filter categories: explicit > profile preferences > sensible defaults.
-    if request.categories:
-        categories = request.categories
-    elif preferred:
-        categories = [POICategory(c) for c in preferred if c in POICategory._value2member_map_]
+    profile = await UserProfile.find_one(UserProfile.user_id == user.id)
+    preferred_categories = profile.preferred_poi_types if profile else []
+    profile_interests = profile.interests if profile else []
+
+    # Derive trip scale.
+    route_points = decode_polyline(request.context.route_polyline)
+    if not route_points:
+        return {"suggestions": []}
+    try:
+        trip_scale = (
+            TripScale(request.context.trip_scale)
+            if request.context.trip_scale
+            else detect_trip_scale(route_points)
+        )
+    except ValueError:
+        trip_scale = detect_trip_scale(route_points)
+
+    # Determine which Mapbox categories to search.
+    # Priority: explicit intent > profile interests > profile categories > defaults.
+    explicit = request.intent.desired_categories or []
+    if explicit:
+        category_strs = explicit
     else:
+        # Fan out interest mapbox_categories first, then add broad categories.
+        interest_cats: list[str] = []
+        for i in profile_interests or []:
+            interest_cats.extend(i.get("mapbox_categories") or [])
+        category_strs = interest_cats + (preferred_categories or [])
+    # Map any that fit our POICategory enum; ignore the rest (they'd need
+    # future Mapbox-subcategory query expansion to actually search).
+    categories = [
+        POICategory(c) for c in category_strs
+        if c in POICategory._value2member_map_
+    ]
+    if not categories:
         categories = [
             POICategory.GAS_STATION,
             POICategory.RESTAURANT,
             POICategory.COFFEE,
             POICategory.SCENIC,
         ]
-    if not categories:
-        return {"suggestions": []}
 
-    # Step 1: candidate POIs along the route. Mirrors discover_route_pois
-    # without the cache layer — recommendations are personalized and
-    # don't share a useful cache key across users.
-    route_points = decode_polyline(request.encoded_polyline)
-    if not route_points:
-        return {"suggestions": []}
+    # POI discovery (no cache; recs are personalized).
     mid_idx = len(route_points) // 2
     proximity = route_points[mid_idx]
     bounds = calculate_bounds(route_points)
@@ -630,7 +706,7 @@ async def get_stop_recommendations(
         distribute=True,
     )
 
-    # Step 2: history aggregates (small two-query fan-out).
+    # History aggregates (two-query fan-out).
     cat_avg_rows = await WaypointStopHistoryDoc.aggregate(
         [
             {"$match": {"user_id": user.id, "waypoint_category": {"$ne": None}}},
@@ -658,13 +734,26 @@ async def get_stop_recommendations(
     ).to_list()
     by_hour = [{"hour": r["_id"], "count": r["count"]} for r in hour_rows]
 
-    # Step 3: score.
+    # Map the wire enums to the scorer's enums.
+    try:
+        mode = TimeBudgetMode(request.context.time_budget_mode)
+    except ValueError:
+        mode = TimeBudgetMode.MODERATE
+    try:
+        invocation = Invocation(request.intent.invocation)
+    except ValueError:
+        invocation = Invocation.AUTO
+
     ranked = rank_suggestions(
         pois,
-        preferred_categories=preferred,
+        profile_categories=preferred_categories,
+        profile_interests=profile_interests or [],
         category_averages=category_averages,
         by_hour=by_hour,
-        remaining_budget_minutes=request.remaining_budget_minutes,
+        mode=mode,
+        trip_scale=trip_scale,
+        invocation=invocation,
+        hours_since_last_stop=request.context.hours_since_last_stop,
         now=datetime.utcnow(),
         limit=3,
     )

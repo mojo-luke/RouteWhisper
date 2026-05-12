@@ -4,9 +4,28 @@ Ported from PolylineUtils.kt (commit 9b95a3a)
 """
 
 import math
+from enum import Enum
 from typing import List, Tuple
 from shapely.geometry import Point, LineString, Polygon
 from shapely.ops import unary_union
+
+
+class TripScale(str, Enum):
+    """Coarse trip classification used by the recommendation engine.
+
+    Thresholds per `docs/recommendations-brief.md` → "Trip scale":
+        local    : <20 mi
+        regional : 20–100 mi
+        long     : 100+ mi
+
+    Detection is route-distance based (the sum of segment lengths along
+    the polyline) — NOT straight-line origin-to-destination. A winding
+    coastal route can be a `long` trip even between cities that look
+    close as the crow flies.
+    """
+    LOCAL = "local"
+    REGIONAL = "regional"
+    LONG = "long"
 
 
 def decode_polyline(polyline: str, precision: int = 6) -> List[Tuple[float, float]]:
@@ -246,3 +265,34 @@ def point_to_line_distance(
     distance_miles = distance_degrees * 60.0  # Approximate conversion
 
     return distance_miles
+
+
+def route_length_miles(route_points: List[Tuple[float, float]]) -> float:
+    """Sum of haversine distances between consecutive route points.
+
+    Empty / single-point routes return 0.0. Used to classify trip
+    scale and to detect when a multi-day plan needs an overnight
+    break.
+    """
+    if len(route_points) < 2:
+        return 0.0
+    total = 0.0
+    for i in range(len(route_points) - 1):
+        total += calculate_distance_miles(route_points[i], route_points[i + 1])
+    return total
+
+
+def detect_trip_scale(route_points: List[Tuple[float, float]]) -> TripScale:
+    """Classify a route as local / regional / long.
+
+    Uses route-distance, not straight-line — see TripScale docstring
+    for the brief reference. A 25-mile commute with curves still
+    classifies as `regional` even if origin and destination are 12
+    miles apart as the crow flies.
+    """
+    miles = route_length_miles(route_points)
+    if miles < 20:
+        return TripScale.LOCAL
+    if miles < 100:
+        return TripScale.REGIONAL
+    return TripScale.LONG
