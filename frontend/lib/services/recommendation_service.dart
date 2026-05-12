@@ -56,6 +56,9 @@ class RecommendationService extends ChangeNotifier {
   int maxPerTrip;
   bool enabled;
 
+  /// HTTP client. Tests inject a mock; production uses the default.
+  final http.Client _httpClient;
+
   Timer? _timer;
   DateTime? _lastSurface;
   int _surfaceCount = 0;
@@ -69,7 +72,8 @@ class RecommendationService extends ChangeNotifier {
     this.minGapBetweenSurfaces = _defaultMinGap,
     this.maxPerTrip = _defaultMaxPerTrip,
     this.enabled = true,
-  });
+    http.Client? httpClient,
+  }) : _httpClient = httpClient ?? http.Client();
 
   /// Apply runtime settings (typically read from `UserProfile`). Safe to
   /// call before or after [start]; if a poll timer is running with the
@@ -181,7 +185,7 @@ class RecommendationService extends ChangeNotifier {
     };
 
     try {
-      final response = await http.post(
+      final response = await _httpClient.post(
         Uri.parse('$_baseUrl/recommendations/stops'),
         headers: {
           'Content-Type': 'application/json',
