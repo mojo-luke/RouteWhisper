@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter/material.dart';
 import '../models/waypoint.dart';
 import '../widgets/poi_confirmation_sheet.dart';
@@ -129,6 +130,15 @@ class NavigationController extends ChangeNotifier {
       _currentState = newState;
       notifyListeners();
     }
+  }
+
+  /// Test-only seam to drive the navigation state machine without going
+  /// through the bridge / native side. Used by RecommendationService and
+  /// any other test that needs `NavigationService.isNavigating == true`
+  /// without standing up a real nav session.
+  @visibleForTesting
+  void setStateForTesting(NavigationState state) {
+    _setState(state);
   }
 
   // --- inbound event handlers (registered with the bridge in initialize) ---

@@ -59,6 +59,11 @@ class RecommendationService extends ChangeNotifier {
   /// HTTP client. Tests inject a mock; production uses the default.
   final http.Client _httpClient;
 
+  /// How to get the Bearer token. Defaults to the real AuthService;
+  /// tests inject a static provider so they don't need a Supabase
+  /// session.
+  final String? Function() _tokenProvider;
+
   Timer? _timer;
   DateTime? _lastSurface;
   int _surfaceCount = 0;
@@ -73,7 +78,10 @@ class RecommendationService extends ChangeNotifier {
     this.maxPerTrip = _defaultMaxPerTrip,
     this.enabled = true,
     http.Client? httpClient,
-  }) : _httpClient = httpClient ?? http.Client();
+    String? Function()? tokenProvider,
+  })  : _httpClient = httpClient ?? http.Client(),
+        _tokenProvider =
+            tokenProvider ?? (() => AuthService.instance.accessToken);
 
   /// Apply runtime settings (typically read from `UserProfile`). Safe to
   /// call before or after [start]; if a poll timer is running with the
@@ -163,7 +171,7 @@ class RecommendationService extends ChangeNotifier {
       }
     }
 
-    final token = AuthService.instance.accessToken;
+    final token = _tokenProvider();
     if (token == null) return;
 
     // Build the EngineRequest envelope. See docs/recommendations-brief.md
