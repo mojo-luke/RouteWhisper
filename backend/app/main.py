@@ -983,9 +983,11 @@ def _route_facts_cache_key(polyline: str, interests: list[dict]) -> str:
     # regardless of dict key order.
     h.update(json.dumps(interests, sort_keys=True, default=str).encode()
              if interests else b"[]")
-    # v3 forces a refresh after the name-lead prompt change.
-    # Bump again on any change that affects response shape.
-    return f"route_facts:v3:{h.hexdigest()}"
+    # v6: region kind dropped entirely (was 0.5mi-capped). Until we
+    # have polygon data to test "route passes through region", any
+    # cap on a center-coord is fuzzy. Per-pageid POIContent cache
+    # stays valid; only the response envelope needs refresh.
+    return f"route_facts:v6:{h.hexdigest()}"
 
 
 # Bump this when the TTS model or voice-direction prompt changes.

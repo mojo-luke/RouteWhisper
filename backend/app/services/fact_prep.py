@@ -60,23 +60,43 @@ _INNER_CONCURRENCY = 12
 _AREA_TOP_N = 100
 
 # Per-kind off-route filtering applied AFTER LLM classification.
-# Landmark coordinates point at one visible thing — too far off route
-# and there's nothing to see. Cities/regions extend past their center
-# coord, so the user might still be inside one even at a few miles
-# off-route. Linear features (rivers, roads, coasts) have arbitrary
-# coords along their length, so distance from the coord is meaningless.
-# event_only articles describe things with no physical landmark and
-# are dropped entirely.
+# These caps express a "you can plausibly see it from the driving
+# route" heuristic — NOT a "it's geographically near."
+#
+# Cities and towns stay because their names are recognizable as
+# you enter them (road signs, "entering Bakersfield"). Tightened
+# from the original generous caps but kept usable.
+#
+# Linear features (rivers, roads, coasts) keep the unbounded cap
+# because they extend many miles. If the user is even on a parallel
+# road, they might still see the river/coast nearby.
+#
+# Regions (hills, districts, neighborhoods) are deliberately
+# dropped here — see _DROPPED_KINDS below. Same for event_only.
 _KIND_MAX_OFFROUTE_MILES = {
-    "landmark": 2.0,
-    "city": 8.0,
-    "town": 5.0,
+    "landmark": 0.10,   # ~160m — visible from the driving lane
+    "city": 3.0,        # typical urban core is 1-3mi across
+    "town": 1.5,        # small towns are 0.5-1.5mi across
     "river": float("inf"),
     "road": float("inf"),
     "coast": float("inf"),
-    "region": float("inf"),
-    # event_only is handled separately — we drop the whole fact.
 }
+
+# Kinds that get dropped entirely from the narration corpus.
+#
+# event_only: no physical landmark exists — narrating is dissonant
+#   (the listener has nothing to look at).
+# region: a 0.5mi-cap region (hill, district, neighborhood) felt
+#   fuzzy in practice — "you're 0.5 miles from Telegraph Hill" is
+#   not the same as "you're on Telegraph Hill." Until we have
+#   polygon data or a route-passes-through-region signal that lets
+#   us narrate only when actually inside, the honest move is to
+#   skip these.
+#
+# Future enhancement (Task #37 area): pull Wikidata extent or
+# polygon data per pageid; reintroduce region narration with the
+# correct "is route inside this region?" predicate.
+_DROPPED_KINDS = {"event_only", "region"}
 
 
 # ============================================================
@@ -145,18 +165,30 @@ async def prepare_for_polyline(
     cumulative_along_route = _build_cumulative_along_route(coords)
 
     facts: list[dict] = []
+    dropped_by_kind: dict[str, int] = {}
+    dropped_offroute: dict[str, int] = {}
     for ranked_fact, bundle in zip(ranked, bundles):
         if not bundle or not bundle.get("primary"):
             continue
         kind = bundle.get("feature_kind", "landmark")
-        # Drop event_only entirely — there's nothing for the passenger
-        # to see. Other kinds get a per-kind off-route hard cap that
-        # respects the geographic extent of each kind.
-        if kind == "event_only":
+        # Drop entire kinds we don't narrate yet (event_only, region).
+        # See _DROPPED_KINDS for the rationale.
+        if kind in _DROPPED_KINDS:
+            dropped_by_kind[kind] = dropped_by_kind.get(kind, 0) + 1
             continue
         c = ranked_fact.candidate
-        max_offroute = _KIND_MAX_OFFROUTE_MILES.get(kind, _KIND_MAX_OFFROUTE_MILES["landmark"])
+        # Unknown kinds → strictest cap (treat as landmark) so a
+        # future LLM-emitted kind doesn't accidentally let everything
+        # through.
+        max_offroute = _KIND_MAX_OFFROUTE_MILES.get(
+            kind, _KIND_MAX_OFFROUTE_MILES["landmark"],
+        )
         if c.distance_from_route_miles > max_offroute:
+            dropped_offroute[kind] = dropped_offroute.get(kind, 0) + 1
+            logger.debug(
+                "fact_prep: dropped '%s' (kind=%s, off-route=%.2fmi > cap=%.2fmi)",
+                c.title, kind, c.distance_from_route_miles, max_offroute,
+            )
             continue
 
         along_route = _project_onto_route(
@@ -178,6 +210,21 @@ async def prepare_for_polyline(
             "distance_along_route_meters": along_route,
             "ranked_score": ranked_fact.score,
         })
+    if dropped_by_kind or dropped_offroute:
+        logger.info(
+            "fact_prep filtering: kept=%d, dropped_by_kind=%s, dropped_offroute=%s",
+            len(facts), dropped_by_kind or "{}", dropped_offroute or "{}",
+        )
+    if facts:
+        # Surface what's about to be narrated so we can diagnose
+        # individual misses (e.g., "Telegraph Hill kept as region
+        # 0.4mi off-route") without needing log-level changes.
+        summary = ", ".join(
+            f"{f['article_title']!r}({f['feature_kind']},{f['distance_from_route_miles']:.2f}mi)"
+            for f in facts[:12]
+        )
+        suffix = "..." if len(facts) > 12 else ""
+        logger.info("fact_prep kept: %s%s", summary, suffix)
     return facts
 
 
