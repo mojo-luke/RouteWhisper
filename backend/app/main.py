@@ -1377,6 +1377,153 @@ async def list_saved_facts(user: CurrentUser = Depends(get_current_user)):
     }
 
 
+class DiscoveryItem(BaseModel):
+    """One row in the Discoveries timeline. Same `wikipedia_pageid`
+    can be saved AND visited AND heard, so each item carries any
+    combination of timestamps."""
+    wikipedia_pageid: int
+    article_title: str
+    article_url: str
+    primary: Optional[str] = None  # The friend-voice summary if cached
+    first_heard_at: Optional[str] = None
+    last_heard_at: Optional[str] = None
+    saved_at: Optional[str] = None
+    visited_at: Optional[str] = None
+    last_trip_id: Optional[str] = None
+
+
+@app.get("/api/v1/narration/discoveries")
+async def list_discoveries(user: CurrentUser = Depends(get_current_user)):
+    """Per-user merged timeline of facts the user has engaged with.
+
+    Aggregates three sources, all keyed by `wikipedia_pageid`:
+      - `played` events from NarrationInteraction → "heard"
+      - `visited` events from NarrationInteraction → "visited"
+      - SavedFact records → "saved"
+      - POIContent → article title / URL / primary text fallback
+
+    Sorted by most recent activity (max of saved_at / visited_at /
+    last_heard_at). Used to power the Discoveries screen and,
+    eventually, the rewards / souvenirs surfaces.
+
+    Cost note: this query reads every NarrationInteraction for the
+    user. At scale we'd add an aggregation pipeline or materialize a
+    `UserNarrationSummary` collection on write. For v1 user volumes,
+    the simple read-and-merge is fine.
+    """
+    # 1. Pull all interactions for this user.
+    interactions = (
+        await NarrationInteraction.find(NarrationInteraction.user_id == user.id)
+        .to_list()
+    )
+
+    # 2. Aggregate per pageid: first_heard, last_heard, visited_at,
+    #    last_trip_id (any non-null wins, most recent preferred).
+    by_pageid: dict[int, dict] = {}
+    for ev in interactions:
+        slot = by_pageid.setdefault(ev.wikipedia_pageid, {
+            "first_heard_at": None,
+            "last_heard_at": None,
+            "visited_at": None,
+            "last_trip_id": None,
+        })
+        if ev.event_type == "played":
+            if slot["first_heard_at"] is None or ev.fired_at < slot["first_heard_at"]:
+                slot["first_heard_at"] = ev.fired_at
+            if slot["last_heard_at"] is None or ev.fired_at > slot["last_heard_at"]:
+                slot["last_heard_at"] = ev.fired_at
+        if ev.event_type == "visited":
+            if slot["visited_at"] is None or ev.fired_at > slot["visited_at"]:
+                slot["visited_at"] = ev.fired_at
+        if ev.trip_id and slot["last_trip_id"] is None:
+            slot["last_trip_id"] = ev.trip_id
+
+    # 3. Layer in SavedFact rows. A user can save a fact they never
+    #    heard (theoretically) — `played` event might be missing —
+    #    so we add saved-only pageids too.
+    saved_docs = await SavedFact.find(SavedFact.user_id == user.id).to_list()
+    for d in saved_docs:
+        slot = by_pageid.setdefault(d.wikipedia_pageid, {
+            "first_heard_at": None,
+            "last_heard_at": None,
+            "visited_at": None,
+            "last_trip_id": d.trip_id,
+        })
+        slot["saved_at"] = d.saved_at
+        slot["article_title"] = d.article_title
+        slot["article_url"] = d.article_url
+
+    if not by_pageid:
+        return {"items": []}
+
+    # 4. Look up POIContent for title + primary text. POIContent is
+    #    where the LLM bundle lives; SavedFact has title/url too as
+    #    denormalized fallback. Prefer SavedFact's title (matches
+    #    what user actually saw) when present.
+    pageids = list(by_pageid.keys())
+    pois = await POIContent.find(
+        {"poi_id": {"$in": [f"wiki:{p}" for p in pageids]}}
+    ).to_list()
+    poi_by_pageid: dict[int, POIContent] = {}
+    for p in pois:
+        # poi_id is "wiki:{pageid}"
+        try:
+            pid = int(p.poi_id.split(":", 1)[1])
+            poi_by_pageid[pid] = p
+        except (ValueError, IndexError):
+            continue
+
+    # 5. Build the response list.
+    items: list[DiscoveryItem] = []
+    for pageid, slot in by_pageid.items():
+        title = slot.get("article_title")
+        url = slot.get("article_url")
+        primary = None
+        poi = poi_by_pageid.get(pageid)
+        if poi is not None:
+            if title is None:
+                title = poi.name
+            if url is None:
+                url = (poi.metadata or {}).get("url") or f"https://en.wikipedia.org/?curid={pageid}"
+            if poi.facts:
+                first = poi.facts[0] if isinstance(poi.facts[0], dict) else {}
+                primary = first.get("primary")
+        if title is None:
+            title = f"Wikipedia article #{pageid}"
+        if url is None:
+            url = f"https://en.wikipedia.org/?curid={pageid}"
+
+        items.append(DiscoveryItem(
+            wikipedia_pageid=pageid,
+            article_title=title,
+            article_url=url,
+            primary=primary,
+            first_heard_at=slot["first_heard_at"].isoformat()
+                if slot["first_heard_at"] else None,
+            last_heard_at=slot["last_heard_at"].isoformat()
+                if slot["last_heard_at"] else None,
+            saved_at=slot["saved_at"].isoformat()
+                if slot.get("saved_at") else None,
+            visited_at=slot["visited_at"].isoformat()
+                if slot["visited_at"] else None,
+            last_trip_id=slot["last_trip_id"],
+        ))
+
+    # 6. Sort by most recent activity desc.
+    def _latest(item: DiscoveryItem) -> str:
+        # ISO strings sort correctly lexicographically.
+        return max(
+            s for s in (
+                item.last_heard_at,
+                item.saved_at,
+                item.visited_at,
+            ) if s is not None
+        ) if any((item.last_heard_at, item.saved_at, item.visited_at)) else ""
+    items.sort(key=_latest, reverse=True)
+
+    return {"items": [i.model_dump() for i in items]}
+
+
 class GeocodeCandidate(BaseModel):
     name: str
     full_address: Optional[str] = None

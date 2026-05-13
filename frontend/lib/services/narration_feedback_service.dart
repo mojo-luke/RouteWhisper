@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
+import '../models/discovery_item.dart';
 import 'auth_service.dart';
 import 'authed_http.dart';
 
@@ -125,6 +126,30 @@ class NarrationFeedbackService {
     } catch (e) {
       debugPrint('NarrationFeedbackService.unsaveFact failed: $e');
       return false;
+    }
+  }
+
+  /// Fetch the user's full Discoveries timeline — every fact they've
+  /// saved, visited, or heard, merged by pageid and sorted by most
+  /// recent activity. Used to power the Discoveries screen.
+  static Future<List<DiscoveryItem>> listDiscoveries() async {
+    try {
+      final response = await AuthedHttp.send(
+        () => http.get(
+          Uri.parse('$_baseUrl/narration/discoveries'),
+          headers: _authedHeaders(),
+        ),
+      );
+      if (response.statusCode != 200) {
+        debugPrint('GET /narration/discoveries: HTTP ${response.statusCode}');
+        return const [];
+      }
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final raw = (data['items'] as List).cast<Map<String, dynamic>>();
+      return raw.map(DiscoveryItem.fromJson).toList();
+    } catch (e) {
+      debugPrint('NarrationFeedbackService.listDiscoveries failed: $e');
+      return const [];
     }
   }
 

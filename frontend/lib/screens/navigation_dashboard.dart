@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'discoveries_screen.dart';
 import 'my_trips_screen.dart';
 import 'preferences_screen.dart';
 import '../services/navigation_service.dart';
@@ -155,6 +156,13 @@ class _NavigationDashboardState extends State<NavigationDashboard> {
             tooltip: 'My trips',
             onPressed: () => Navigator.of(context).push(
               MaterialPageRoute(builder: (_) => const MyTripsScreen()),
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.explore_outlined, color: Colors.white),
+            tooltip: 'Discoveries',
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const DiscoveriesScreen()),
             ),
           ),
           IconButton(
