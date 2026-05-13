@@ -44,6 +44,9 @@ class FakeNavigationHostBridge implements NavigationHostBridge {
   Object? speakNarrationError;
   Object? playNarrationAudioError;
   Object? setTurnByTurnVoiceEnabledError;
+  Object? addNarrationMarkerError;
+  Object? setActiveNarrationMarkerError;
+  Object? clearNarrationMarkersError;
 
   NavigationHostHandlers? _handlers;
 
@@ -250,6 +253,46 @@ class FakeNavigationHostBridge implements NavigationHostBridge {
     final err = setTurnByTurnVoiceEnabledError;
     if (err != null) {
       setTurnByTurnVoiceEnabledError = null;
+      throw err;
+    }
+  }
+
+  @override
+  Future<void> addNarrationMarker({
+    required String id,
+    required double lat,
+    required double lng,
+    required String title,
+  }) async {
+    sentCalls.add(RecordedCall('addNarrationMarker', {
+      'id': id,
+      'lat': lat,
+      'lng': lng,
+      'title': title,
+    }));
+    final err = addNarrationMarkerError;
+    if (err != null) {
+      addNarrationMarkerError = null;
+      throw err;
+    }
+  }
+
+  @override
+  Future<void> setActiveNarrationMarker({required String? id}) async {
+    sentCalls.add(RecordedCall('setActiveNarrationMarker', {'id': id}));
+    final err = setActiveNarrationMarkerError;
+    if (err != null) {
+      setActiveNarrationMarkerError = null;
+      throw err;
+    }
+  }
+
+  @override
+  Future<void> clearNarrationMarkers() async {
+    sentCalls.add(const RecordedCall('clearNarrationMarkers', <String, dynamic>{}));
+    final err = clearNarrationMarkersError;
+    if (err != null) {
+      clearNarrationMarkersError = null;
       throw err;
     }
   }

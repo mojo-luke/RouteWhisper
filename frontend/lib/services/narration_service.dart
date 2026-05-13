@@ -91,12 +91,16 @@ class NarrationService extends ChangeNotifier {
 
   /// Clear narration state for trip end / cancellation. The active
   /// card is dismissed; further location updates are no-ops until
-  /// the next startTrip call.
+  /// the next startTrip call. Also tells the native side to wipe the
+  /// trip's narration markers — they're trip-scoped, not persistent
+  /// across trips (yet; the Discoveries-timeline slice will change
+  /// that).
   void endTrip() {
     _queue = const [];
     _active = null;
     _followUpIndex = 0;
     _lastSpokeAt = null;
+    _bridge?.clearNarrationMarkers();
     notifyListeners();
   }
 
@@ -141,14 +145,34 @@ class NarrationService extends ChangeNotifier {
 
   /// Speak the primary line of [fact] now via the native bridge,
   /// promote it to `current` so the UI shows the card, and reset
-  /// follow-up index.
+  /// follow-up index. Also drops a persistent map marker so the user
+  /// has a visual anchor for what's being discussed, and promotes
+  /// it to "active" for the pulsing animation.
   void _fire(RouteFact fact, DateTime now) {
     _active = _ActiveNarration(fact: fact, firedAt: now);
     _followUpIndex = 0;
     _lastSpokeAt = now;
     debugPrint('🗣️ Whisper: "${fact.articleTitle}" — ${fact.primary}');
     _speak(fact.primary, fact.primaryAudioUrl);
+    _dropMarker(fact);
     notifyListeners();
+  }
+
+  /// Add a persistent map marker for [fact] and promote it to the
+  /// active (pulsing) state. Past markers stay on the map but go
+  /// static so the user sees a trail of "everywhere the app has
+  /// pointed out" over the trip.
+  void _dropMarker(RouteFact fact) {
+    final b = _bridge;
+    if (b == null) return;
+    final id = 'wiki-${fact.wikipediaPageid}';
+    b.addNarrationMarker(
+      id: id,
+      lat: fact.lat,
+      lng: fact.lng,
+      title: fact.articleTitle,
+    );
+    b.setActiveNarrationMarker(id: id);
   }
 
   /// Re-speak the current narration. No spacing rule applies — this

@@ -919,18 +919,30 @@ def _route_facts_cache_key(polyline: str, interests: list[dict]) -> str:
     # regardless of dict key order.
     h.update(json.dumps(interests, sort_keys=True, default=str).encode()
              if interests else b"[]")
-    # v2 forces a refresh after the TTS model bump so previously-
-    # cached routes don't keep serving the old voice. Bump again on
-    # any change that affects response shape.
-    return f"route_facts:v2:{h.hexdigest()}"
+    # v3 forces a refresh after the name-lead prompt change.
+    # Bump again on any change that affects response shape.
+    return f"route_facts:v3:{h.hexdigest()}"
 
 
-# Bump this when the TTS model or prompt changes meaningfully. Old
-# POIContent entries with a different version get treated as a
-# cache miss, forcing re-synthesis with the current voice / model.
-# Text content (primary/follow_ups) is preserved from cache when
-# possible to avoid re-paying for the LLM summarization.
-_TTS_VERSION = "v2-gpt4omini-nova"
+# Bump this when the TTS model or voice-direction prompt changes.
+# Audio-only invalidation: cached LLM text is reused, only the mp3
+# bytes get re-synthesized.
+#
+# History:
+#   v1 — tts-1, no instructions
+#   v2 — gpt-4o-mini-tts + friend-voice instructions
+#   v3 — added gentle name-emphasis instruction
+_TTS_VERSION = "v3-name-lead"
+
+# Bump this when the LLM summarization prompt itself changes such
+# that the cached primary/follow_ups text would no longer match the
+# new contract. Forces full re-LLM AND re-synthesis on next request
+# for any pageid with a mismatched version.
+#
+# History:
+#   v1 — original "friend in passenger seat" prompt
+#   v2 — added the "primary MUST open with place name" rule
+_LLM_VERSION = "v2-name-lead"
 
 
 async def _get_or_summarize(summarizer, tts, wiki, candidate) -> dict:
@@ -954,24 +966,33 @@ async def _get_or_summarize(summarizer, tts, wiki, candidate) -> dict:
     cached_primary: str | None = None
     cached_follow_ups: list[str] | None = None
     cached_is_thin: bool = False
+    text_cache_valid = False
     if existing and existing.facts:
         first = existing.facts[0] if isinstance(existing.facts[0], dict) else {}
-        cached_primary = first.get("primary")
-        cached_follow_ups = first.get("follow_ups")
-        cached_is_thin = bool(first.get("is_thin", False))
-        # Full cache hit: audio synthesized with current model AND
-        # actual bytes present. Skip extract + LLM + TTS entirely.
+        # Text-level cache is only honored when the LLM prompt
+        # version matches. A prompt change like "open with the
+        # place name" makes old text obsolete.
+        if first.get("llm_version") == _LLM_VERSION:
+            cached_primary = first.get("primary")
+            cached_follow_ups = first.get("follow_ups")
+            cached_is_thin = bool(first.get("is_thin", False))
+            text_cache_valid = (
+                cached_primary is not None
+                and cached_follow_ups is not None
+            )
+        # Full cache hit: text AND audio match the current versions.
+        # Skip extract + LLM + TTS entirely.
         if (
-            cached_primary
+            text_cache_valid
             and first.get("tts_version") == _TTS_VERSION
             and first.get("primary_audio")
         ):
             return _bundle_to_response(first, pageid)
 
-    # Partial cache hit: text exists from a prior LLM run but audio
-    # needs refreshing (TTS version bumped). Reuse text, skip the
-    # Wikipedia + LLM round-trip, just re-synthesize.
-    if cached_primary is not None and cached_follow_ups is not None:
+    # Partial cache hit: text exists from a prior LLM run (with the
+    # current prompt) but audio needs refreshing (TTS version bumped).
+    # Reuse text, skip the Wikipedia + LLM round-trip, just re-synth.
+    if text_cache_valid:
         bundle = SimpleNamespaceLike(
             primary=cached_primary,
             follow_ups=cached_follow_ups,
@@ -1015,6 +1036,7 @@ async def _get_or_summarize(summarizer, tts, wiki, candidate) -> dict:
         "follow_ups_audio": list(follow_ups_audio),
         "is_thin": bundle.is_thin,
         "tts_version": _TTS_VERSION,
+        "llm_version": _LLM_VERSION,
     }
 
     # Persist back to POIContent for future trips.

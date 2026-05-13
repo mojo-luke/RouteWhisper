@@ -109,6 +109,7 @@ class NavigationController extends ChangeNotifier {
 
   Future<void> cancelNavigation() async {
     _setState(NavigationState.cancelled);
+    NavigationService.narration.endTrip();
     try {
       await _bridge.cancelNavigation();
     } catch (e) {
@@ -201,6 +202,10 @@ class NavigationController extends ChangeNotifier {
 
   void _onDestinationArrived() {
     _setState(NavigationState.completed);
+    // Wrap up narration state so the next trip starts clean.
+    // Markers persist visually until the next trip clears them;
+    // the queue + active card reset here.
+    NavigationService.narration.endTrip();
   }
 
   Map<String, dynamic>? _onWaypointProgressRequest({

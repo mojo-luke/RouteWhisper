@@ -53,7 +53,10 @@ _INSTRUCTIONS = (
     "the way you'd actually tell them about a place — warm, curious, "
     "a little wry. Conversational pacing, never declamatory. Lean "
     "into the interesting beat and trust the listener to follow. "
-    "Sound like a real person, not an audiobook narrator."
+    "Sound like a real person, not an audiobook narrator.\n\n"
+    "Important: the line opens with a location's name — give it a "
+    "tiny natural emphasis, as if pointing at it out the window, "
+    "but don't overdo it. Then settle into your friendly storytelling."
 )
 
 # Output format. mp3 is universally playable on Android via MediaPlayer

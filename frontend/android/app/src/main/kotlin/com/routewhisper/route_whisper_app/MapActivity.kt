@@ -169,6 +169,18 @@ class MapActivity : AppCompatActivity() {
     private val poiAnnotations = mutableListOf<PointAnnotation>()
     private val poiIdByAnnotation = mutableMapOf<String, String>()
 
+    // Narration map markers — a separate annotation manager so the layer
+    // can be controlled independently of the in-nav POI markers. Markers
+    // persist for the whole trip (so the user sees a trail of "everywhere
+    // the app pointed something out"), with at most one "active" marker
+    // — the place currently being whispered about — that pulses.
+    private var narrationAnnotationManager: PointAnnotationManager? = null
+    // id (Wikipedia pageid) → annotation, so we can swap a static marker
+    // to its active variant (and back) without rebuilding the layer.
+    private val narrationAnnotationsById = mutableMapOf<String, PointAnnotation>()
+    private var activeNarrationId: String? = null
+    private var narrationPulseAnimator: android.animation.ValueAnimator? = null
+
     // Waypoint arrival and departure tracking
     private var lastWaypointLocation: Point? = null
     private var isMonitoringDeparture = false
@@ -1260,6 +1272,169 @@ class MapActivity : AppCompatActivity() {
         val announcement = SpeechAnnouncement.Builder(text).build()
         voiceInstructionsPlayer.play(announcement, narrationPlayerCallback)
         Log.d(TAG, "🗣️ Narration spoken: \"${text.take(80)}...\"")
+    }
+
+    /**
+     * Add a narration marker to the persistent narration layer. If
+     * the id already exists we leave the existing annotation alone
+     * (idempotent) — the caller can flip its active state via
+     * setActiveNarrationMarker without re-adding.
+     */
+    fun addNarrationMarker(id: String, lat: Double, lng: Double, title: String) {
+        runOnUiThread {
+            ensureNarrationAnnotationManager()
+            if (narrationAnnotationsById.containsKey(id)) return@runOnUiThread
+            val manager = narrationAnnotationManager ?: return@runOnUiThread
+            val bitmap = buildNarrationBitmap(active = false)
+            val options = PointAnnotationOptions()
+                .withPoint(Point.fromLngLat(lng, lat))
+                .withIconImage(bitmap)
+                .withIconSize(1.0)
+                .withTextField(title)
+                .withTextOffset(listOf(0.0, 1.6))
+                .withTextSize(11.0)
+                .withTextColor("#FFFFFF")
+                .withTextHaloColor("#000000")
+                .withTextHaloWidth(1.5)
+            val annotation = manager.create(options)
+            narrationAnnotationsById[id] = annotation
+            Log.d(TAG, "📍 Narration marker added: $id ($title)")
+        }
+    }
+
+    /**
+     * Promote the marker with [id] to the active (pulsing) style.
+     * Pass null to mean "no active marker right now"; the previously-
+     * active marker reverts to static.
+     */
+    fun setActiveNarrationMarker(id: String?) {
+        runOnUiThread {
+            // Revert the previously active marker (if any) to static.
+            activeNarrationId?.let { prev ->
+                val manager = narrationAnnotationManager
+                val ann = narrationAnnotationsById[prev]
+                if (manager != null && ann != null) {
+                    ann.iconImageBitmap = buildNarrationBitmap(active = false)
+                    ann.iconSize = 1.0
+                    manager.update(ann)
+                }
+            }
+            stopNarrationPulse()
+            activeNarrationId = id
+            if (id == null) return@runOnUiThread
+
+            val manager = narrationAnnotationManager ?: return@runOnUiThread
+            val ann = narrationAnnotationsById[id] ?: return@runOnUiThread
+            ann.iconImageBitmap = buildNarrationBitmap(active = true)
+            ann.iconSize = 1.2
+            manager.update(ann)
+            startNarrationPulse(ann, manager)
+            Log.d(TAG, "📍 Narration marker active: $id")
+        }
+    }
+
+    /**
+     * Wipe every narration marker from the map. Trip-scoped: called
+     * on trip end / cancellation. The Discoveries-timeline slice will
+     * eventually persist these per-user and rehydrate on next trip.
+     */
+    fun clearNarrationMarkers() {
+        runOnUiThread {
+            stopNarrationPulse()
+            activeNarrationId = null
+            val manager = narrationAnnotationManager ?: return@runOnUiThread
+            if (narrationAnnotationsById.isNotEmpty()) {
+                manager.delete(narrationAnnotationsById.values.toList())
+                narrationAnnotationsById.clear()
+            }
+            Log.d(TAG, "📍 Narration markers cleared")
+        }
+    }
+
+    private fun ensureNarrationAnnotationManager() {
+        if (narrationAnnotationManager != null) return
+        narrationAnnotationManager = mapView.annotations.createPointAnnotationManager()
+        // (No click listener here yet — Phase 2 talkback will wire taps
+        //  to a "replay / save / dismiss" sheet keyed by the marker id.)
+    }
+
+    /**
+     * Drive a subtle scale pulse on the active marker by mutating its
+     * iconSize between 1.05 and 1.35 on a 1.4s loop. We update at ~12
+     * fps which is plenty for a pulse and cheap on Mapbox's
+     * annotation pipeline.
+     */
+    private fun startNarrationPulse(
+        annotation: PointAnnotation,
+        manager: PointAnnotationManager,
+    ) {
+        val animator = android.animation.ValueAnimator.ofFloat(1.05f, 1.35f).apply {
+            duration = 700
+            repeatMode = android.animation.ValueAnimator.REVERSE
+            repeatCount = android.animation.ValueAnimator.INFINITE
+            interpolator = android.view.animation.AccelerateDecelerateInterpolator()
+            addUpdateListener { va ->
+                // Only update if this animator is still the active one
+                // — defensive, in case a clear/swap races.
+                if (narrationPulseAnimator !== this) return@addUpdateListener
+                annotation.iconSize = (va.animatedValue as Float).toDouble()
+                manager.update(annotation)
+            }
+        }
+        narrationPulseAnimator = animator
+        animator.start()
+    }
+
+    private fun stopNarrationPulse() {
+        narrationPulseAnimator?.cancel()
+        narrationPulseAnimator = null
+    }
+
+    /**
+     * Build the narration marker bitmap — a clean circle with a
+     * notification-style halo on the active variant. Single accent
+     * color so it reads as "RouteWhisper noticed something" rather
+     * than competing with the POI-category palette.
+     */
+    private fun buildNarrationBitmap(active: Boolean): Bitmap {
+        val size = if (active) 112 else 80
+        val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val cx = size / 2f
+        val cy = size / 2f
+        val accent = Color.parseColor("#4FC3F7") // sky/teal
+        if (active) {
+            // Outer halo for the active marker — gives it the
+            // visual "pulse" punch alongside the size animation.
+            val halo = Paint().apply {
+                color = Color.parseColor("#664FC3F7")
+                style = Paint.Style.FILL
+                isAntiAlias = true
+            }
+            canvas.drawCircle(cx, cy, size / 2f - 2f, halo)
+        }
+        val fill = Paint().apply {
+            color = accent
+            style = Paint.Style.FILL
+            isAntiAlias = true
+        }
+        val stroke = Paint().apply {
+            color = Color.WHITE
+            style = Paint.Style.STROKE
+            strokeWidth = if (active) 6f else 5f
+            isAntiAlias = true
+        }
+        val r = if (active) 28f else 24f
+        canvas.drawCircle(cx, cy, r, fill)
+        canvas.drawCircle(cx, cy, r, stroke)
+        // Speech-bubble dot in the center as a tiny visual hook.
+        val dot = Paint().apply {
+            color = Color.WHITE
+            style = Paint.Style.FILL
+            isAntiAlias = true
+        }
+        canvas.drawCircle(cx, cy, if (active) 7f else 6f, dot)
+        return bitmap
     }
 
     /** Mirrors the emoji set on the Flutter POI model. */

@@ -51,7 +51,7 @@ void main() {
     // fact[0] has primaryAudioUrl → uses MediaPlayer path, not TTS.
     expect(bridge.callsTo('playNarrationAudio'), hasLength(1));
     expect(bridge.callsTo('speakNarration'), isEmpty);
-    expect(bridge.lastCall!.args['url'],
+    expect(bridge.callsTo('playNarrationAudio').last.args['url'],
         '/api/v1/audio/wiki-49728-primary');
   });
 
@@ -87,7 +87,8 @@ void main() {
     );
     expect(bridge.callsTo('speakNarration'), hasLength(1));
     expect(bridge.callsTo('playNarrationAudio'), isEmpty);
-    expect(bridge.lastCall!.args['text'], contains('no audio'));
+    expect(bridge.callsTo('speakNarration').last.args['text'],
+        contains('no audio'));
   });
 
   test('location update outside proximity does not fire', () async {
@@ -266,6 +267,61 @@ void main() {
     service.endTrip();
     expect(service.current, isNull);
     expect(service.hasLoadedFacts, isFalse);
+  });
+
+  // --- Map markers ---
+
+  test('firing a narration adds a marker and promotes it to active',
+      () async {
+    await service.startTrip('p');
+    service.onLocationUpdate(
+      latitude: 37.7749,
+      longitude: -122.4194,
+      speedMph: 30.0,
+    );
+
+    final addCalls = bridge.callsTo('addNarrationMarker');
+    expect(addCalls, hasLength(1));
+    expect(addCalls.first.args['id'], 'wiki-49728');
+    expect(addCalls.first.args['title'], 'San Francisco');
+    expect(addCalls.first.args['lat'], 37.7749);
+    expect(addCalls.first.args['lng'], -122.4194);
+
+    final activeCalls = bridge.callsTo('setActiveNarrationMarker');
+    expect(activeCalls, hasLength(1));
+    expect(activeCalls.first.args['id'], 'wiki-49728');
+  });
+
+  test('successive whispers each drop a new marker (persistent trail)',
+      () async {
+    await service.startTrip('p');
+    service.onLocationUpdate(
+      latitude: 37.7749,
+      longitude: -122.4194,
+      speedMph: 30.0,
+    );
+    fakeNow = fakeNow.add(const Duration(seconds: 40));
+    service.onLocationUpdate(
+      latitude: 37.8024,
+      longitude: -122.4058,
+      speedMph: 30.0,
+    );
+    expect(bridge.callsTo('addNarrationMarker'), hasLength(2));
+    // Most recent one is now active.
+    final activeCalls = bridge.callsTo('setActiveNarrationMarker');
+    expect(activeCalls.last.args['id'], 'wiki-523456');
+  });
+
+  test('endTrip clears all narration markers from the map', () async {
+    await service.startTrip('p');
+    service.onLocationUpdate(
+      latitude: 37.7749,
+      longitude: -122.4194,
+      speedMph: 30.0,
+    );
+    expect(bridge.callsTo('addNarrationMarker'), hasLength(1));
+    service.endTrip();
+    expect(bridge.callsTo('clearNarrationMarkers'), hasLength(1));
   });
 }
 

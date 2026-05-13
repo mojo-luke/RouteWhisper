@@ -168,6 +168,9 @@ class MainActivity : FlutterActivity() {
                 "speakNarration" -> handleSpeakNarration(call, result)
                 "playNarrationAudio" -> handlePlayNarrationAudio(call, result)
                 "setTurnByTurnVoiceEnabled" -> handleSetTurnByTurnVoiceEnabled(call, result)
+                "addNarrationMarker" -> handleAddNarrationMarker(call, result)
+                "setActiveNarrationMarker" -> handleSetActiveNarrationMarker(call, result)
+                "clearNarrationMarkers" -> handleClearNarrationMarkers(result)
                 else -> result.notImplemented()
             }
         }
@@ -384,6 +387,36 @@ class MainActivity : FlutterActivity() {
             return
         }
         speakNarration(text)
+        result.success(null)
+    }
+
+    /**
+     * Drop / promote / clear narration markers on the native map. We
+     * silently no-op when MapActivity isn't around (markers only have
+     * meaning while the map is up). Failures don't surface as Flutter
+     * errors — narration markers are a UX nicety, not load-bearing.
+     */
+    private fun handleAddNarrationMarker(call: MethodCall, result: MethodChannel.Result) {
+        val id = call.argument<String>("id")
+        val lat = call.argument<Double>("lat")
+        val lng = call.argument<Double>("lng")
+        val title = call.argument<String>("title")
+        if (id == null || lat == null || lng == null || title == null) {
+            result.error("INVALID_ARGS", "Missing marker fields", null)
+            return
+        }
+        MapActivity.currentInstance?.addNarrationMarker(id, lat, lng, title)
+        result.success(null)
+    }
+
+    private fun handleSetActiveNarrationMarker(call: MethodCall, result: MethodChannel.Result) {
+        val id = call.argument<String>("id") // may be null
+        MapActivity.currentInstance?.setActiveNarrationMarker(id)
+        result.success(null)
+    }
+
+    private fun handleClearNarrationMarkers(result: MethodChannel.Result) {
+        MapActivity.currentInstance?.clearNarrationMarkers()
         result.success(null)
     }
 

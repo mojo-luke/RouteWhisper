@@ -119,6 +119,33 @@ abstract class NavigationHostBridge {
   /// **Native effect:** MediaPlayer.setDataSource(url) + start().
   Future<void> playNarrationAudio({required String url});
 
+  /// Drop a narration marker on the live map for the place currently
+  /// being whispered about. Markers persist for the whole trip so the
+  /// user can see a trail of everything the app has surfaced, with
+  /// the active one pulsing per [setActiveNarrationMarker]. `id` is
+  /// the stable Wikipedia pageid so future tap-to-interact can map
+  /// back to the fact.
+  /// **Native effect:** PointAnnotation added to the narration layer.
+  Future<void> addNarrationMarker({
+    required String id,
+    required double lat,
+    required double lng,
+    required String title,
+  });
+
+  /// Promote a previously-added marker to "active" (pulsing). At most
+  /// one marker is active at a time; the previously-active marker
+  /// reverts to its static style. Call with null to mean "no active
+  /// marker right now" (e.g., between whispers).
+  /// **Native effect:** swaps icons + drives the pulse animator.
+  Future<void> setActiveNarrationMarker({required String? id});
+
+  /// Wipe every narration marker from the map. Called at trip end or
+  /// cancellation. Future-proof: an explicit user "clear discoveries"
+  /// gesture could call this too.
+  /// **Native effect:** narration PointAnnotationManager cleared.
+  Future<void> clearNarrationMarkers();
+
   /// Push the user's turn-by-turn voice preference to the native side.
   ///
   /// When false, MapActivity drops Mapbox `VoiceInstructions` instead of
@@ -378,6 +405,31 @@ class MethodChannelNavigationHostBridge implements NavigationHostBridge {
   @override
   Future<void> setTurnByTurnVoiceEnabled({required bool enabled}) async {
     await _channel.invokeMethod('setTurnByTurnVoiceEnabled', {'enabled': enabled});
+  }
+
+  @override
+  Future<void> addNarrationMarker({
+    required String id,
+    required double lat,
+    required double lng,
+    required String title,
+  }) async {
+    await _channel.invokeMethod('addNarrationMarker', {
+      'id': id,
+      'lat': lat,
+      'lng': lng,
+      'title': title,
+    });
+  }
+
+  @override
+  Future<void> setActiveNarrationMarker({required String? id}) async {
+    await _channel.invokeMethod('setActiveNarrationMarker', {'id': id});
+  }
+
+  @override
+  Future<void> clearNarrationMarkers() async {
+    await _channel.invokeMethod('clearNarrationMarkers');
   }
 
   @override
