@@ -3,6 +3,8 @@ import 'package:provider/provider.dart';
 import 'my_trips_screen.dart';
 import 'preferences_screen.dart';
 import '../services/navigation_service.dart';
+import '../services/route_facts_service.dart';
+import '../services/trip_service.dart';
 import '../services/user_profile_service.dart';
 import '../widgets/budget_pill.dart';
 import '../widgets/narration_card.dart';
@@ -31,6 +33,30 @@ class _NavigationDashboardState extends State<NavigationDashboard> {
     // Navigation state, waypoints, and route polyline come from Provider — widgets
     // rebuild automatically when state changes.
     _hydrateBudgetFromProfile();
+    // Ask the backend to pre-warm narration content for the user's
+    // likely-driven area. Server-side throttled, so calling on every
+    // dashboard mount is fine. Effect: first whispers on ad-hoc local
+    // drives land instantly because POIContent is already warm.
+    _prewarmNarrationArea();
+  }
+
+  /// Seed the prewarm with the user's most recent trip's origin as
+  /// a proxy for "your local area." If they have no trips yet, we
+  /// don't have a coordinate hint and skip — they'll prefetch
+  /// implicitly via the trip-create path the moment they plan one.
+  Future<void> _prewarmNarrationArea() async {
+    try {
+      final trips = await TripService.list();
+      if (trips.isEmpty) return;
+      final seed = trips.first; // most recent trip
+      await RouteFactsService.prewarmArea(
+        lat: seed.originLat,
+        lng: seed.originLng,
+        radiusMiles: 30.0,
+      );
+    } catch (_) {
+      // Pre-warm failures are silent (see prewarmArea docstring).
+    }
   }
 
   /// Pull the signed-in user's profile and apply it to the live services:

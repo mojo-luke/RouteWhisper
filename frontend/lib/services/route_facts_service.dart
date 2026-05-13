@@ -44,6 +44,43 @@ class RouteFactsService {
     }
   }
 
+  /// Ask the backend to pre-warm POIContent around the given seed.
+  ///
+  /// Fire-and-forget. The backend kicks off a background task and
+  /// returns 202 immediately; subsequent trips near this area land
+  /// on a warm cache so the first whisper fires within milliseconds
+  /// instead of after a cold synthesis pass.
+  ///
+  /// Throttled server-side, so the dashboard can call this on every
+  /// mount without worrying about cost or thrashing.
+  static Future<void> prewarmArea({
+    required double lat,
+    required double lng,
+    double radiusMiles = 30.0,
+  }) async {
+    try {
+      final response = await AuthedHttp.send(
+        () => http.post(
+          Uri.parse('$_baseUrl/narration/prewarm-area'),
+          headers: _authedHeaders(),
+          body: jsonEncode({
+            'lat': lat,
+            'lng': lng,
+            'radius_miles': radiusMiles,
+          }),
+        ),
+      );
+      if (response.statusCode != 202 && response.statusCode != 200) {
+        debugPrint(
+            'POST /narration/prewarm-area: HTTP ${response.statusCode}');
+      }
+    } catch (e) {
+      // Pre-warm failures are silent — they just mean the next
+      // cold trip starts slow, which is the status quo.
+      debugPrint('RouteFactsService.prewarmArea failed: $e');
+    }
+  }
+
   static Map<String, String> _authedHeaders() {
     final token = AuthService.instance.accessToken;
     return {

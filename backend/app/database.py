@@ -328,6 +328,13 @@ class Trip(Document):
     # "I already booked the first hotel — confirmation # XYZ".
     notes: Optional[str] = None
 
+    # Mapbox precision-6 polyline for the driving route. Populated at
+    # trip create/update time by the server (see mapbox_directions.py)
+    # so the narration pre-warm task can run against the same geometry
+    # the device will eventually navigate. None when origin/dest don't
+    # resolve to a route, or when computing failed temporarily.
+    polyline: Optional[str] = None
+
     created_at: datetime = datetime.utcnow()
     updated_at: datetime = datetime.utcnow()
 

@@ -56,6 +56,13 @@ class NarrationService extends ChangeNotifier {
   // by trimming "already-passed" facts as the user moves.
   List<RouteFact> _queue = const [];
 
+  // True between startTrip and the moment the fetch resolves. Drives
+  // the "Loading whispers..." indicator on the NarrationCard so a
+  // user whose first trip is hitting a cold backend cache doesn't
+  // wonder why nothing's happening.
+  bool _isLoading = false;
+  bool get isLoading => _isLoading;
+
   // The most recent fact we narrated. The narration card reads this
   // and shows the title + primary text + buttons.
   _ActiveNarration? _active;
@@ -80,11 +87,15 @@ class NarrationService extends ChangeNotifier {
   /// a different polyline replaces the queue.
   Future<void> startTrip(String polyline) async {
     debugPrint('🗣️ Narration: loading facts for trip...');
-    final facts = await _fetcher(polyline);
-    _queue = facts;
+    _isLoading = true;
+    _queue = const [];
     _active = null;
     _followUpIndex = 0;
     _lastSpokeAt = null;
+    notifyListeners();
+    final facts = await _fetcher(polyline);
+    _queue = facts;
+    _isLoading = false;
     debugPrint('🗣️ Narration: loaded ${facts.length} facts');
     notifyListeners();
   }
@@ -100,6 +111,7 @@ class NarrationService extends ChangeNotifier {
     _active = null;
     _followUpIndex = 0;
     _lastSpokeAt = null;
+    _isLoading = false;
     _bridge?.clearNarrationMarkers();
     notifyListeners();
   }

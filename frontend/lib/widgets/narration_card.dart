@@ -44,7 +44,36 @@ class _NarrationCardState extends State<NarrationCard> {
   @override
   Widget build(BuildContext context) {
     final active = _service.current;
-    if (active == null) return const SizedBox.shrink();
+    if (active == null) {
+      // No active whisper yet. If we're still loading the trip's
+      // facts (first cache fill can take 20-60s on a cold backend),
+      // show a quiet placeholder so the user knows the system is
+      // working rather than wondering why it's silent.
+      if (_service.isLoading) {
+        return const Card(
+          margin: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          elevation: 2,
+          child: Padding(
+            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                SizedBox(width: 12),
+                Text(
+                  'Loading whispers for this route…',
+                  style: TextStyle(color: Colors.white70),
+                ),
+              ],
+            ),
+          ),
+        );
+      }
+      return const SizedBox.shrink();
+    }
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       elevation: 4,

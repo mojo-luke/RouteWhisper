@@ -620,6 +620,7 @@ class TripPayload(BaseModel):
     pins: list = Field(default_factory=list)
     days: list = Field(default_factory=list)
     notes: Optional[str] = None
+    polyline: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 
@@ -642,8 +643,38 @@ def _trip_to_payload(trip: Trip) -> TripPayload:
         pins=trip.pins,
         days=trip.days,
         notes=trip.notes,
+        polyline=trip.polyline,
         created_at=trip.created_at.isoformat() if trip.created_at else None,
         updated_at=trip.updated_at.isoformat() if trip.updated_at else None,
+    )
+
+
+async def _compute_and_prewarm_trip(trip: Trip, interests: list[dict]) -> None:
+    """Compute the trip's driving polyline via Mapbox Directions and
+    kick off a background pre-warm of the narration cache. Persists
+    the polyline back to the Trip document so re-driving the same
+    trip skips the Directions call.
+
+    Called from POST/PUT /trips. Both Directions and the prewarm are
+    best-effort: if either fails, the trip still saves cleanly and
+    the user can still drive — they'll just hit the cold-cache path
+    at trip-start time.
+    """
+    from app.services.mapbox_directions import fetch_polyline
+    from app.services.fact_prep import fire_and_forget_prepare_polyline
+
+    polyline = await fetch_polyline(
+        trip.origin_lat, trip.origin_lng,
+        trip.destination_lat, trip.destination_lng,
+    )
+    if not polyline:
+        return
+    trip.polyline = polyline
+    await trip.save()
+    fire_and_forget_prepare_polyline(
+        polyline,
+        user_interests=interests,
+        label=f"trip={trip.id}",
     )
 
 
@@ -675,6 +706,16 @@ async def create_trip(
         updated_at=now,
     )
     await trip.insert()
+    # Best-effort: compute the polyline + prewarm narration cache so
+    # the user's first drive on this trip hits a warm cache. We await
+    # the polyline compute (a single Directions call, ~200ms) so the
+    # response includes it, but the prewarm itself is fire-and-forget.
+    profile = await UserProfile.find_one(UserProfile.user_id == user.id)
+    interests = list(profile.interests) if profile else []
+    try:
+        await _compute_and_prewarm_trip(trip, interests)
+    except Exception as e:
+        logger.warning("trip prewarm failed for new trip: %s", e)
     return _trip_to_payload(trip)
 
 
@@ -729,8 +770,25 @@ async def update_trip(
     trip.pins = payload.pins
     trip.days = payload.days
     trip.notes = payload.notes
+    # Track whether origin/destination changed; if so, the prior
+    # polyline + per-route cache are stale and we recompute.
+    origin_changed = (
+        trip.origin_lat != payload.origin_lat
+        or trip.origin_lng != payload.origin_lng
+    )
+    dest_changed = (
+        trip.destination_lat != payload.destination_lat
+        or trip.destination_lng != payload.destination_lng
+    )
     trip.updated_at = datetime.utcnow()
     await trip.save()
+    if origin_changed or dest_changed or not trip.polyline:
+        profile = await UserProfile.find_one(UserProfile.user_id == user.id)
+        interests = list(profile.interests) if profile else []
+        try:
+            await _compute_and_prewarm_trip(trip, interests)
+        except Exception as e:
+            logger.warning("trip prewarm failed on update: %s", e)
     return _trip_to_payload(trip)
 
 
@@ -751,6 +809,63 @@ async def get_poi_facts():
     """Legacy stub from pre-Phase-1. The real narration endpoint is
     `/api/v1/route/facts` — see RouteFactsRequest below."""
     return {"message": "Use /api/v1/route/facts (Phase 1 narration)"}
+
+
+class PrewarmAreaRequest(BaseModel):
+    """Body for `/api/v1/narration/prewarm-area`. Warms POIContent
+    around a point so future trips through this region land on a
+    warm cache. `radius_miles` defaults to 30 — about the realistic
+    range of an ad-hoc local drive."""
+    lat: float
+    lng: float
+    radius_miles: float = 30.0
+
+
+# Redis short-TTL key prefix for prewarm throttling. We don't want
+# the dashboard hammering this endpoint every time the user opens
+# the app — once per area per hour is plenty since the cache is
+# global and persistent.
+_PREWARM_THROTTLE_KEY = "prewarm:area:v1"
+_PREWARM_THROTTLE_TTL_SECONDS = 60 * 60  # 1 hour
+
+
+@app.post("/api/v1/narration/prewarm-area", status_code=202)
+async def prewarm_area(
+    body: PrewarmAreaRequest,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Kick off a background fact-prep run for a circular area
+    around `(lat, lng)`. Returns 202 immediately; the work happens
+    asynchronously and fills POIContent globally so future trips
+    near this area land on a warm cache.
+
+    Throttled per user + rounded coord — repeated calls from the
+    same dashboard load are no-ops for an hour.
+    """
+    from app.services.fact_prep import fire_and_forget_prepare_area
+
+    # Coarse-grain coords to ~3-mile resolution for the throttle
+    # key. 0.05° ≈ 3.4 miles. Two opens of the dashboard from the
+    # same neighborhood collapse to one prewarm.
+    coarse_lat = round(body.lat / 0.05) * 0.05
+    coarse_lng = round(body.lng / 0.05) * 0.05
+    throttle_key = f"{_PREWARM_THROTTLE_KEY}:{user.id}:{coarse_lat:.3f}:{coarse_lng:.3f}"
+    redis = await get_redis()
+    already = await redis.get(throttle_key)
+    if already:
+        return {"status": "skipped", "reason": "recently warmed"}
+    await redis.set(throttle_key, "1", ex=_PREWARM_THROTTLE_TTL_SECONDS)
+
+    profile = await UserProfile.find_one(UserProfile.user_id == user.id)
+    interests = list(profile.interests) if profile else []
+
+    fire_and_forget_prepare_area(
+        body.lat, body.lng,
+        radius_miles=body.radius_miles,
+        user_interests=interests,
+        label=f"user={user.id} area={body.lat:.3f},{body.lng:.3f}",
+    )
+    return {"status": "queued"}
 
 
 class RouteFactsRequest(BaseModel):
@@ -812,25 +927,24 @@ async def route_facts(
     NarrationService consumes this and triggers narration on GPS
     proximity.
     """
-    from app.services.wikipedia_facts import WikipediaFactsService
-    from app.services.fact_ranker import rank_candidates
-    from app.services.llm_summarizer import LLMSummarizer
-    import hashlib
     import json
-    import asyncio
+    from app.services.fact_prep import prepare_for_polyline
 
     polyline = (body.polyline or "").strip()
     if not polyline:
         return {"facts": []}
 
-    # Redis cache: per-route. Keyed by polyline hash + interests
-    # hash, so a different user with different interests gets a
-    # different cached envelope.
+    # Resolve interests: explicit override on the request wins; else
+    # the caller's saved profile; else empty list.
     interests = body.user_interests
     if interests is None:
         profile = await UserProfile.find_one(UserProfile.user_id == user.id)
         interests = list(profile.interests) if profile else []
 
+    # Redis envelope cache. Keyed by polyline hash + interests hash, so
+    # a different user with different interests gets a different cached
+    # envelope. The expensive per-pageid work is cached globally in
+    # POIContent regardless.
     route_key = _route_facts_cache_key(polyline, interests)
     redis = await get_redis()
     cached = await redis.get(route_key)
@@ -838,68 +952,12 @@ async def route_facts(
         try:
             return {"facts": json.loads(cached)}
         except json.JSONDecodeError:
-            # Corrupt cache — log and rebuild rather than fail.
             logger.warning("route facts cache corrupt for %s; rebuilding", route_key)
 
-    # 1) Discovery
-    wiki = WikipediaFactsService()
-    try:
-        candidates = await wiki.geosearch_along_polyline(polyline)
-    finally:
-        await wiki.close()
-    if not candidates:
-        await redis.set(route_key, "[]", ex=_ROUTE_FACTS_TTL_SECONDS)
-        return {"facts": []}
+    facts_out = await prepare_for_polyline(
+        polyline, user_interests=interests
+    )
 
-    # 2) Rank + cap
-    ranked = rank_candidates(candidates, user_interests=interests)
-    if not ranked:
-        await redis.set(route_key, "[]", ex=_ROUTE_FACTS_TTL_SECONDS)
-        return {"facts": []}
-
-    # 3) Per-article summarization + TTS synthesis with POIContent cache
-    from app.services.openai_tts import TtsSynthesizer
-    summarizer = LLMSummarizer()
-    tts = TtsSynthesizer()
-    # Reopen a wiki client for cache-miss extract fetches. We keep
-    # the same instance for the whole batch so the connection pool
-    # is reused and concurrency is shared with the existing geosearch
-    # semaphore inside the service.
-    wiki_for_extracts = WikipediaFactsService()
-    facts_out: list[dict] = []
-    # Summarize in parallel via to_thread (Anthropic + OpenAI SDKs are
-    # both sync). Bounded concurrency so we don't spike costs or rate
-    # limits.
-    sem = asyncio.Semaphore(4)
-
-    async def _process(ranked_fact):
-        c = ranked_fact.candidate
-        async with sem:
-            bundle = await _get_or_summarize(summarizer, tts, wiki_for_extracts, c)
-        return {
-            "lat": c.lat,
-            "lng": c.lng,
-            "article_title": c.title,
-            "article_url": c.url,
-            "wikipedia_pageid": c.wikipedia_pageid,
-            "primary": bundle["primary"],
-            "primary_audio_url": bundle["primary_audio_url"],
-            "follow_ups": bundle["follow_ups"],
-            "follow_up_audio_urls": bundle["follow_up_audio_urls"],
-            "is_thin": bundle["is_thin"],
-            "distance_from_route_miles": c.distance_from_route_miles,
-            "ranked_score": ranked_fact.score,
-        }
-
-    try:
-        facts_out = await asyncio.gather(*[_process(r) for r in ranked])
-    finally:
-        await wiki_for_extracts.close()
-
-    # Skip facts whose summarization failed entirely (no primary text).
-    facts_out = [f for f in facts_out if f.get("primary")]
-
-    # 4) Cache the assembled envelope
     await redis.set(
         route_key,
         json.dumps(facts_out),
@@ -1020,14 +1078,20 @@ async def _get_or_summarize(summarizer, tts, wiki, candidate) -> dict:
             extract,
         )
 
-    # Synthesize audio for each text line. tts.synthesize returns
-    # None on failure; we persist None and the response surfaces a
-    # null audio_url so the device falls back to local TTS for
-    # that specific line.
+    # Synthesize audio for the primary only — that's what fires on
+    # every whisper. Follow-ups stay text-only and fall back to
+    # local Android TTS when the user taps "Tell me more". Reasons:
+    #   - Most users don't tap "Tell me more" on most facts;
+    #     pre-synthesizing all follow-ups quadruples per-route TTS
+    #     cost and time for material that's rarely heard.
+    #   - With 30 articles × 4 audio clips through a finite semaphore,
+    #     the cache fill stretches past short test-trip durations and
+    #     the user hears nothing.
+    # Future enhancement: lazy synthesis on Tell-Me-More tap, served
+    # via /api/v1/audio/wiki-{pageid}-fu-{i} that synthesizes if not
+    # yet cached. Tracked separately.
     primary_audio = await asyncio.to_thread(tts.synthesize, bundle.primary)
-    follow_ups_audio = await asyncio.gather(*[
-        asyncio.to_thread(tts.synthesize, fu) for fu in bundle.follow_ups
-    ])
+    follow_ups_audio: list = [None] * len(bundle.follow_ups)
 
     stored = {
         "primary": bundle.primary,

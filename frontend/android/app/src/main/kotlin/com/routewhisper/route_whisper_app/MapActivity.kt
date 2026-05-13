@@ -1000,8 +1000,13 @@ class MapActivity : AppCompatActivity() {
                 // Push all events to the internal replayer
                 mapboxReplayer.pushEvents(replayEvents)
 
-                // Set playback speed (3.0x for faster testing)
-                mapboxReplayer.playbackSpeed(3.0)
+                // Playback speed for the in-emulator simulation. 1.0x =
+                // real time. Higher values (3.0x) get you through a long
+                // test route fast, but compress the time between
+                // narrations so spacing rules + the active-marker pulse
+                // are hard to evaluate. Keep at 1.0x while narration UX
+                // is being tuned; bump back up for non-narration testing.
+                mapboxReplayer.playbackSpeed(1.0)
 
                 // Seek to first location
                 mapboxReplayer.seekTo(replayEvents.first())
@@ -1009,7 +1014,7 @@ class MapActivity : AppCompatActivity() {
                 // Start playback - this will feed locations into MapboxNavigation automatically
                 mapboxReplayer.play()
 
-                Log.d(TAG, "Started replay playback at 3.0x speed")
+                Log.d(TAG, "Started replay playback at 1.0x speed")
 
                 // Switch to following mode after 3 seconds
                 simulationHandler.postDelayed({
