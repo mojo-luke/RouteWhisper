@@ -147,7 +147,7 @@ class NarrationService extends ChangeNotifier {
     _followUpIndex = 0;
     _lastSpokeAt = now;
     debugPrint('🗣️ Whisper: "${fact.articleTitle}" — ${fact.primary}');
-    _bridge?.speakNarration(text: fact.primary);
+    _speak(fact.primary, fact.primaryAudioUrl);
     notifyListeners();
   }
 
@@ -156,10 +156,15 @@ class NarrationService extends ChangeNotifier {
   void replay() {
     final a = _active;
     if (a == null) return;
-    final text = _followUpIndex == 0
-        ? a.fact.primary
-        : a.fact.followUps[_followUpIndex - 1];
-    _bridge?.speakNarration(text: text);
+    if (_followUpIndex == 0) {
+      _speak(a.fact.primary, a.fact.primaryAudioUrl);
+    } else {
+      final i = _followUpIndex - 1;
+      _speak(
+        a.fact.followUps[i],
+        _audioAt(a.fact.followUpAudioUrls, i),
+      );
+    }
   }
 
   /// Advance to the next follow-up. Returns false when exhausted
@@ -169,12 +174,30 @@ class NarrationService extends ChangeNotifier {
     if (a == null) return false;
     if (a.fact.isThin) return false;
     if (_followUpIndex >= a.fact.followUps.length) return false;
-    final next = a.fact.followUps[_followUpIndex];
+    final i = _followUpIndex;
+    final next = a.fact.followUps[i];
+    final url = _audioAt(a.fact.followUpAudioUrls, i);
     _followUpIndex += 1;
-    _bridge?.speakNarration(text: next);
+    _speak(next, url);
     notifyListeners();
     return true;
   }
+
+  /// Audio-URL-when-available, else fall back to local TTS on the
+  /// text. Both paths still hit the same bridge so callers can stay
+  /// blissfully ignorant.
+  void _speak(String text, String? audioUrl) {
+    final b = _bridge;
+    if (b == null) return;
+    if (audioUrl != null && audioUrl.isNotEmpty) {
+      b.playNarrationAudio(url: audioUrl);
+    } else {
+      b.speakNarration(text: text);
+    }
+  }
+
+  String? _audioAt(List<String?> urls, int i) =>
+      (i >= 0 && i < urls.length) ? urls[i] : null;
 
   /// Returns true when there's more to say (more follow-ups remain
   /// AND the article isn't thin). UI uses this to enable/disable

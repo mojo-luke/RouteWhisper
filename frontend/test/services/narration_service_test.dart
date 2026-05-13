@@ -48,8 +48,46 @@ void main() {
     );
     expect(service.current, isNotNull);
     expect(service.current!.fact.articleTitle, 'San Francisco');
+    // fact[0] has primaryAudioUrl → uses MediaPlayer path, not TTS.
+    expect(bridge.callsTo('playNarrationAudio'), hasLength(1));
+    expect(bridge.callsTo('speakNarration'), isEmpty);
+    expect(bridge.lastCall!.args['url'],
+        '/api/v1/audio/wiki-49728-primary');
+  });
+
+  test('fact without audio_url falls back to local TTS', () async {
+    // Build a fact list where the primary line has no audio URL —
+    // the device should fall back to speakNarration on the text.
+    final factsNoAudio = [
+      RouteFact(
+        lat: 37.7749,
+        lng: -122.4194,
+        articleTitle: 'No Audio Place',
+        articleUrl: 'https://en.wikipedia.org/?curid=1',
+        wikipediaPageid: 1,
+        primary: 'A place with no audio.',
+        primaryAudioUrl: null,
+        followUps: const [],
+        followUpAudioUrls: const [],
+        isThin: true,
+        distanceFromRouteMiles: 0.1,
+        rankedScore: 0.5,
+      ),
+    ];
+    service = NarrationService(
+      bridge: bridge,
+      fetcher: (_) async => factsNoAudio,
+      now: () => fakeNow,
+    );
+    await service.startTrip('p');
+    service.onLocationUpdate(
+      latitude: 37.7749,
+      longitude: -122.4194,
+      speedMph: 30.0,
+    );
     expect(bridge.callsTo('speakNarration'), hasLength(1));
-    expect(bridge.lastCall!.args['text'], contains('San Francisco'));
+    expect(bridge.callsTo('playNarrationAudio'), isEmpty);
+    expect(bridge.lastCall!.args['text'], contains('no audio'));
   });
 
   test('location update outside proximity does not fire', () async {
@@ -62,6 +100,7 @@ void main() {
     );
     expect(service.current, isNull);
     expect(bridge.callsTo('speakNarration'), isEmpty);
+    expect(bridge.callsTo('playNarrationAudio'), isEmpty);
   });
 
   test('speed above maxSpeedMph silences narration', () async {
@@ -73,6 +112,7 @@ void main() {
     );
     expect(service.current, isNull);
     expect(bridge.callsTo('speakNarration'), isEmpty);
+    expect(bridge.callsTo('playNarrationAudio'), isEmpty);
   });
 
   test('spacing rule blocks back-to-back narrations', () async {
@@ -82,7 +122,7 @@ void main() {
       longitude: -122.4194,
       speedMph: 30.0,
     );
-    expect(bridge.callsTo('speakNarration'), hasLength(1));
+    expect(bridge.callsTo('playNarrationAudio'), hasLength(1));
 
     // Advance time by less than minSpacing — even at the second fact's
     // coordinates, no fire should happen.
@@ -92,7 +132,7 @@ void main() {
       longitude: -122.4058, // Coit Tower
       speedMph: 30.0,
     );
-    expect(bridge.callsTo('speakNarration'), hasLength(1));
+    expect(bridge.callsTo('playNarrationAudio'), hasLength(1));
   });
 
   test('after spacing elapses a new fact can fire', () async {
@@ -109,7 +149,7 @@ void main() {
       longitude: -122.4058,
       speedMph: 30.0,
     );
-    expect(bridge.callsTo('speakNarration'), hasLength(2));
+    expect(bridge.callsTo('playNarrationAudio'), hasLength(2));
     expect(service.current!.fact.articleTitle, 'Coit Tower');
   });
 
@@ -120,23 +160,23 @@ void main() {
       longitude: -122.4194,
       speedMph: 30.0,
     );
-    expect(bridge.callsTo('speakNarration'), hasLength(1));
+    expect(bridge.callsTo('playNarrationAudio'), hasLength(1));
 
     fakeNow = fakeNow.add(const Duration(seconds: 60));
     // Stay at the same spot. The first fact is gone; the only
     // remaining fact (Coit Tower at 0.3mi away) might or might not
     // be in proximity depending on the exact distance, but it
     // should NOT be the first one again.
-    final preCalls = bridge.callsTo('speakNarration').length;
+    final firstUrl = bridge.callsTo('playNarrationAudio').first.args['url'];
+    final preCount = bridge.callsTo('playNarrationAudio').length;
     service.onLocationUpdate(
       latitude: 37.7749,
       longitude: -122.4194,
       speedMph: 30.0,
     );
-    final postCalls = bridge.callsTo('speakNarration');
     // San Francisco fact does not fire a second time.
-    for (final call in postCalls.skip(preCalls)) {
-      expect(call.args['text'], isNot(contains('San Francisco')));
+    for (final call in bridge.callsTo('playNarrationAudio').skip(preCount)) {
+      expect(call.args['url'], isNot(equals(firstUrl)));
     }
   });
 
@@ -153,19 +193,21 @@ void main() {
 
     final advanced1 = service.tellMeMore();
     expect(advanced1, isTrue);
-    expect(bridge.callsTo('speakNarration'), hasLength(2));
-    expect(bridge.lastCall!.args['text'], contains('Gold Rush'));
+    expect(bridge.callsTo('playNarrationAudio'), hasLength(2));
+    expect(bridge.lastCall!.args['url'],
+        '/api/v1/audio/wiki-49728-fu-0');
 
     final advanced2 = service.tellMeMore();
     expect(advanced2, isTrue);
-    expect(bridge.callsTo('speakNarration'), hasLength(3));
-    expect(bridge.lastCall!.args['text'], contains('cable car'));
+    expect(bridge.callsTo('playNarrationAudio'), hasLength(3));
+    expect(bridge.lastCall!.args['url'],
+        '/api/v1/audio/wiki-49728-fu-1');
 
     // Exhausted
     final advanced3 = service.tellMeMore();
     expect(advanced3, isFalse);
     expect(service.canTellMore, isFalse);
-    expect(bridge.callsTo('speakNarration'), hasLength(3));
+    expect(bridge.callsTo('playNarrationAudio'), hasLength(3));
   });
 
   test('thin facts disable tellMeMore even with follow-ups present',
@@ -200,7 +242,7 @@ void main() {
     expect(service.tellMeMore(), isFalse);
   });
 
-  test('replay re-speaks the current narration regardless of spacing',
+  test('replay re-plays the current narration regardless of spacing',
       () async {
     await service.startTrip('p');
     service.onLocationUpdate(
@@ -208,9 +250,9 @@ void main() {
       longitude: -122.4194,
       speedMph: 30.0,
     );
-    expect(bridge.callsTo('speakNarration'), hasLength(1));
+    expect(bridge.callsTo('playNarrationAudio'), hasLength(1));
     service.replay();
-    expect(bridge.callsTo('speakNarration'), hasLength(2));
+    expect(bridge.callsTo('playNarrationAudio'), hasLength(2));
   });
 
   test('endTrip clears queue and current narration', () async {
@@ -227,9 +269,9 @@ void main() {
   });
 }
 
-/// Two-fact fixture: San Francisco (with 2 follow-ups) and Coit Tower
-/// (thin). Coords are real; both will be in proximity from a query
-/// at SF's center.
+/// Two-fact fixture: San Francisco (with 2 follow-ups, audio for all)
+/// and Coit Tower (thin). Coords are real; both will be in proximity
+/// from a query at SF's center.
 List<RouteFact> _twoFacts() => [
       RouteFact(
         lat: 37.7749,
@@ -238,9 +280,14 @@ List<RouteFact> _twoFacts() => [
         articleUrl: 'https://en.wikipedia.org/?curid=49728',
         wikipediaPageid: 49728,
         primary: 'San Francisco was built on Gold Rush dreams and has the steepest streets you can legally drive.',
+        primaryAudioUrl: '/api/v1/audio/wiki-49728-primary',
         followUps: [
           'The Gold Rush turned a tiny mission settlement into a global port in under five years.',
           'The cable car system is the only one of its kind still running — and a National Historic Landmark.',
+        ],
+        followUpAudioUrls: const [
+          '/api/v1/audio/wiki-49728-fu-0',
+          '/api/v1/audio/wiki-49728-fu-1',
         ],
         isThin: false,
         distanceFromRouteMiles: 0.1,
@@ -253,7 +300,9 @@ List<RouteFact> _twoFacts() => [
         articleUrl: 'https://en.wikipedia.org/?curid=523456',
         wikipediaPageid: 523456,
         primary: 'Coit Tower is an Art Deco tower on Telegraph Hill, built in 1933 as a memorial to volunteer firefighters.',
+        primaryAudioUrl: '/api/v1/audio/wiki-523456-primary',
         followUps: [],
+        followUpAudioUrls: const [],
         isThin: true,
         distanceFromRouteMiles: 0.2,
         rankedScore: 0.85,

@@ -52,6 +52,12 @@ class _NavigationDashboardState extends State<NavigationDashboard> {
       minGapBetweenSurfaces:
           Duration(minutes: profile.recommendationsMinGapMinutes),
     );
+    // Push the voice preference to native — without this, a fresh app
+    // launch would always start with turn-by-turn enabled regardless
+    // of what the user set last session.
+    NavigationService.controller.bridge.setTurnByTurnVoiceEnabled(
+      enabled: profile.turnByTurnVoiceEnabled,
+    );
   }
 
   @override

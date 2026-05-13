@@ -81,6 +81,13 @@ class MapActivity : AppCompatActivity() {
 
         // Store reference to current MapActivity instance for in-place updates
         internal var currentInstance: MapActivity? = null
+
+        // User preference for Mapbox turn-by-turn voice. Default on
+        // preserves legacy behavior; MainActivity flips this via the
+        // `setTurnByTurnVoiceEnabled` method-channel call when the
+        // user toggles the Preferences screen switch. We keep it on
+        // the companion so the flag survives MapActivity recreation.
+        internal var turnByTurnVoiceEnabled: Boolean = true
     }
 
     private var mapboxNavigation: MapboxNavigation? = null
@@ -524,7 +531,11 @@ class MapActivity : AppCompatActivity() {
         })
 
         // Voice instructions observer - plays audio guidance (v3: includes cleanup callback)
+        // Gated by the user preference: when off, we don't even
+        // generate the speech, saving a network round-trip per
+        // instruction and silencing turn-by-turn entirely.
         mapboxNavigation?.registerVoiceInstructionsObserver(VoiceInstructionsObserver { voiceInstructions ->
+            if (!turnByTurnVoiceEnabled) return@VoiceInstructionsObserver
             speechApi.generate(voiceInstructions) { expected ->
                 expected.fold(
                     { error ->

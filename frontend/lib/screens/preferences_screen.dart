@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
+import '../services/navigation_service.dart';
 import '../services/user_profile_service.dart';
 
 /// Minimal preferences screen — preferred POI categories, default time
@@ -159,6 +160,13 @@ class _PreferencesScreenState extends State<PreferencesScreen> {
         _profile = saved;
         _saving = false;
       });
+      // Push voice preference to native so MapActivity knows to
+      // skip turn-by-turn instructions when disabled. Fire-and-forget
+      // — a transient failure here just means the device hears the
+      // voice until the next push (e.g., next app launch).
+      NavigationService.controller.bridge.setTurnByTurnVoiceEnabled(
+        enabled: saved.turnByTurnVoiceEnabled,
+      );
     }
   }
 
@@ -350,6 +358,26 @@ class _PreferencesScreenState extends State<PreferencesScreen> {
                             _profile.copyWith(
                               recommendationsMinGapMinutes: v.round(),
                             ),
+                          ),
+                ),
+                const SizedBox(height: 32),
+                _SectionHeader(
+                  title: 'Voice',
+                  subtitle:
+                      'Turn the Mapbox turn-by-turn voice off if it\'s grating — '
+                      'POI narration is separate and stays on either way.',
+                ),
+                SwitchListTile.adaptive(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Turn-by-turn voice'),
+                  subtitle: const Text(
+                    'Mapbox\'s "turn left in 200 feet" announcements.',
+                  ),
+                  value: _profile.turnByTurnVoiceEnabled,
+                  onChanged: _saving
+                      ? null
+                      : (v) => _save(
+                            _profile.copyWith(turnByTurnVoiceEnabled: v),
                           ),
                 ),
               ],

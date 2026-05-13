@@ -116,7 +116,12 @@ class WikipediaFactsService:
         radius_m: int = _GEOSEARCH_RADIUS_M,
     ) -> list[FactCandidate]:
         """Decode polyline, sample, geosearch each sample in parallel,
-        dedupe by pageid, fetch extracts in parallel.
+        dedupe by pageid. **Does not fetch article extracts** — the
+        caller is responsible for calling `fetch_extract(pageid)` only
+        for the candidates it intends to summarize (typically after the
+        per-article POIContent cache check eliminates most of them).
+        That keeps Wikipedia request volume proportional to *new* facts,
+        not all facts on the route.
 
         Returns candidates in pageid-stable order (lowest first) so
         callers and tests don't need to depend on Wikipedia's
@@ -134,10 +139,10 @@ class WikipediaFactsService:
             len(coords), len(samples), scale.value, stride,
         )
 
-        # Parallel geosearch around each sample. Wikipedia tolerates
-        # this fine for our densities; we cap concurrency anyway
-        # because going too parallel is rude.
-        sem = asyncio.Semaphore(8)
+        # Parallel geosearch around each sample. Wikipedia rate-limits
+        # bursts aggressively; 3 is conservative enough to never trip
+        # the 429 even with ~30 samples on a long trip.
+        sem = asyncio.Semaphore(3)
 
         async def _bounded_geosearch(point):
             async with sem:
@@ -171,18 +176,12 @@ class WikipediaFactsService:
         if not by_pageid:
             return []
 
-        # Fetch extracts in parallel. Same concurrency cap.
-        async def _bounded_extract(pageid):
-            async with sem:
-                return await self._fetch_extract(pageid)
-
+        # Build candidates from geosearch alone — extract is empty
+        # until the orchestrator decides this candidate is worth
+        # spending a Wikipedia request on.
         pageids = sorted(by_pageid.keys())
-        extracts = await asyncio.gather(*[_bounded_extract(p) for p in pageids])
-
         out: list[FactCandidate] = []
-        for pageid, extract_text in zip(pageids, extracts):
-            if not extract_text:
-                continue
+        for pageid in pageids:
             meta = by_pageid[pageid]
             out.append(FactCandidate(
                 wikipedia_pageid=pageid,
@@ -190,11 +189,17 @@ class WikipediaFactsService:
                 lat=meta["lat"],
                 lng=meta["lng"],
                 distance_from_route_miles=meta["distance"],
-                extract=extract_text,
+                extract="",
                 url=f"https://en.wikipedia.org/?curid={pageid}",
             ))
-        logger.info("wikipedia: produced %d candidates", len(out))
+        logger.info("wikipedia: produced %d candidates (geosearch only)", len(out))
         return out
+
+    async def fetch_extract(self, pageid: int) -> str:
+        """Public wrapper around `_fetch_extract` so the orchestration
+        layer can call it for cache-miss pageids only. Returns empty
+        string on failure (including 429s)."""
+        return await self._fetch_extract(pageid)
 
     async def _geosearch_point(
         self,

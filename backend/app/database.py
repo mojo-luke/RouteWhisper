@@ -265,6 +265,11 @@ class UserProfile(Document):
     recommendations_max_per_trip: int = 3
     recommendations_min_gap_minutes: int = 15
 
+    # Step 4 — voice settings. Turn-by-turn defaults on (legacy nav
+    # behavior); users who find the Mapbox voice grating turn this off
+    # and rely on the visual nav UI + POI narration only.
+    turn_by_turn_voice_enabled: bool = True
+
     updated_at: datetime = datetime.utcnow()
 
     class Settings:

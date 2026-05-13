@@ -42,6 +42,8 @@ class FakeNavigationHostBridge implements NavigationHostBridge {
   Object? setRecommendationError;
   Object? clearRecommendationError;
   Object? speakNarrationError;
+  Object? playNarrationAudioError;
+  Object? setTurnByTurnVoiceEnabledError;
 
   NavigationHostHandlers? _handlers;
 
@@ -228,6 +230,26 @@ class FakeNavigationHostBridge implements NavigationHostBridge {
     final err = speakNarrationError;
     if (err != null) {
       speakNarrationError = null;
+      throw err;
+    }
+  }
+
+  @override
+  Future<void> playNarrationAudio({required String url}) async {
+    sentCalls.add(RecordedCall('playNarrationAudio', {'url': url}));
+    final err = playNarrationAudioError;
+    if (err != null) {
+      playNarrationAudioError = null;
+      throw err;
+    }
+  }
+
+  @override
+  Future<void> setTurnByTurnVoiceEnabled({required bool enabled}) async {
+    sentCalls.add(RecordedCall('setTurnByTurnVoiceEnabled', {'enabled': enabled}));
+    final err = setTurnByTurnVoiceEnabledError;
+    if (err != null) {
+      setTurnByTurnVoiceEnabledError = null;
       throw err;
     }
   }

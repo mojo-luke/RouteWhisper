@@ -1,6 +1,9 @@
 package com.routewhisper.route_whisper_app
 
 import android.content.Intent
+import android.media.AudioAttributes
+import android.media.MediaPlayer
+import android.speech.tts.TextToSpeech
 import android.util.Log
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -9,9 +12,32 @@ import io.flutter.embedding.engine.dart.DartExecutor
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import com.mapbox.navigation.core.lifecycle.MapboxNavigationApp
+import java.util.Locale
 
 class MainActivity : FlutterActivity() {
     private val methodChannelName = "routewhisper.com/navigation"
+
+    // Narration TTS engine. Lives at MainActivity scope (which survives
+    // when the user backs out of MapActivity), so whispers keep playing
+    // whether or not the live map is foregrounded. The Mapbox voice
+    // player is still responsible for turn-by-turn voice — that stays
+    // in MapActivity where it's tied to the active route.
+    private var narrationTts: TextToSpeech? = null
+    private var narrationTtsReady = false
+    // Queued speaks that arrive before the engine finishes async init.
+    private val pendingNarrations = mutableListOf<String>()
+
+    // MediaPlayer for premium-voice narration (OpenAI-synthesized mp3
+    // streamed from our backend). One instance reused across narrations
+    // — release on destroy. Separate audio path from the local-TTS
+    // fallback above.
+    private var narrationPlayer: MediaPlayer? = null
+
+    // Where the backend lives, used to resolve relative audio URLs.
+    // 10.0.2.2 is the emulator's loopback to the Mac. Real devices on
+    // the same LAN need a different host — we'll lift this constant
+    // out the moment iOS + physical-device testing matters.
+    private val backendBase = "http://10.0.2.2:8000"
 
     companion object {
         const val SHARED_ENGINE_ID = "routewhisper_shared_engine"
@@ -87,6 +113,40 @@ class MainActivity : FlutterActivity() {
 
         Log.d("MainActivity", "Configuring shared Flutter engine: $SHARED_ENGINE_ID")
 
+        // Spin up the narration TTS engine. We pass the explicit Google
+        // TTS package as the engine to avoid relying on `tts_default_synth`
+        // being set — some emulators ship with the engine installed but
+        // not selected as default, leaving the no-arg constructor with
+        // nothing to initialize. Falls back to the system default if
+        // Google TTS isn't installed (rare; it's bundled on most builds).
+        val initListener = TextToSpeech.OnInitListener { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                // setLanguage returns:
+                //   >=0 (LANG_AVAILABLE / _COUNTRY_AVAILABLE / _VAR_AVAILABLE)
+                //   -1 LANG_MISSING_DATA   ← engine installed, voice not
+                //   -2 LANG_NOT_SUPPORTED  ← engine doesn't speak this lang
+                // If we ignore this we silently can't speak, which is exactly
+                // the failure mode we just hit in the emulator.
+                val langStatus = narrationTts?.setLanguage(Locale.US)
+                Log.d("MainActivity", "🗣️ Narration TTS engine ready, setLanguage=$langStatus")
+                if (langStatus == TextToSpeech.LANG_MISSING_DATA ||
+                    langStatus == TextToSpeech.LANG_NOT_SUPPORTED) {
+                    Log.w("MainActivity", "🗣️ Voice data missing for en-US — install via TTS settings")
+                }
+                narrationTtsReady = true
+                pendingNarrations.forEach { speakNarration(it) }
+                pendingNarrations.clear()
+            } else {
+                Log.e("MainActivity", "Narration TTS init failed: status=$status")
+            }
+        }
+        narrationTts = try {
+            TextToSpeech(applicationContext, initListener, "com.google.android.tts")
+        } catch (e: Throwable) {
+            Log.w("MainActivity", "Google TTS unavailable, falling back to default: $e")
+            TextToSpeech(applicationContext, initListener)
+        }
+
         val channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, methodChannelName)
         methodChannelInstance = channel  // Store reference for MapActivity
 
@@ -106,6 +166,8 @@ class MainActivity : FlutterActivity() {
                 "setRecommendation" -> handleSetRecommendation(call, result)
                 "clearRecommendation" -> handleClearRecommendation(result)
                 "speakNarration" -> handleSpeakNarration(call, result)
+                "playNarrationAudio" -> handlePlayNarrationAudio(call, result)
+                "setTurnByTurnVoiceEnabled" -> handleSetTurnByTurnVoiceEnabled(call, result)
                 else -> result.notImplemented()
             }
         }
@@ -297,14 +359,23 @@ class MainActivity : FlutterActivity() {
     }
 
     /**
-     * Speak arbitrary narration text via the Mapbox voice player.
+     * Speak arbitrary narration text via MainActivity's TextToSpeech.
      *
-     * Phase 1 narration: reuses the same MapboxVoiceInstructionsPlayer the
-     * turn-by-turn voice uses. That shares audio focus with the nav voice
-     * (no fighting over the speaker), and per the Mapbox SDK doc page on
-     * voice instructions the player handles ducking/queuing internally —
-     * turn-by-turn announcements take priority by virtue of being queued
-     * by the same player on the same channel.
+     * Routes narration through Android's built-in TTS rather than the
+     * Mapbox voice player. Reasons:
+     *
+     *   1. The Mapbox player is bound to MapActivity's lifecycle and
+     *      tears down when the user backs out — narration must keep
+     *      working from the home dashboard too.
+     *   2. The Mapbox player expects an audio File on its announcements;
+     *      passing a bare text-only SpeechAnnouncement made it accept
+     *      the call but produce no sound.
+     *
+     * Turn-by-turn voice still flows through the Mapbox player inside
+     * MapActivity, untouched. Audio focus may briefly collide if a
+     * turn instruction lands during a whisper; Android's TTS engine
+     * handles its own focus politely so this should duck rather than
+     * stomp.
      */
     private fun handleSpeakNarration(call: MethodCall, result: MethodChannel.Result) {
         val text = call.argument<String>("text")
@@ -312,17 +383,112 @@ class MainActivity : FlutterActivity() {
             result.error("INVALID_ARGS", "Missing text", null)
             return
         }
-        val activity = MapActivity.currentInstance
-        if (activity == null) {
-            // Quietly succeed — narration isn't load-bearing and the user
-            // may have backed out of nav. Don't surface this as a Flutter
-            // error or it'll spam logs.
-            Log.d("MainActivity", "speakNarration: no MapActivity; silently dropping")
-            result.success(null)
+        speakNarration(text)
+        result.success(null)
+    }
+
+    /**
+     * Push the user's turn-by-turn voice preference to MapActivity.
+     * Stored on a companion object so MapActivity sees the latest
+     * value whether or not it's currently in the foreground (the
+     * preference might change between trips).
+     */
+    private fun handleSetTurnByTurnVoiceEnabled(call: MethodCall, result: MethodChannel.Result) {
+        val enabled = call.argument<Boolean>("enabled")
+        if (enabled == null) {
+            result.error("INVALID_ARGS", "Missing enabled", null)
             return
         }
-        activity.speakNarration(text)
+        MapActivity.turnByTurnVoiceEnabled = enabled
+        Log.d("MainActivity", "Turn-by-turn voice ${if (enabled) "enabled" else "disabled"}")
         result.success(null)
+    }
+
+    /**
+     * Play a pre-synthesized mp3 (OpenAI-voice narration) from a
+     * server-relative URL like `/api/v1/audio/wiki-49728-primary`.
+     * Resolves against `backendBase` and streams via MediaPlayer.
+     *
+     * One player instance reused — we reset() between plays rather
+     * than constructing a new one. That avoids leaks if the user
+     * mashes Replay or rapid follow-ups land back to back. Errors
+     * are logged and swallowed: a failed mp3 play shouldn't crash
+     * the bridge call. (Bridge fallback to local TTS isn't auto —
+     * the device commits to one path per line via NarrationService.)
+     */
+    private fun handlePlayNarrationAudio(call: MethodCall, result: MethodChannel.Result) {
+        val rawUrl = call.argument<String>("url")
+        if (rawUrl.isNullOrBlank()) {
+            result.error("INVALID_ARGS", "Missing url", null)
+            return
+        }
+        val fullUrl = if (rawUrl.startsWith("http")) rawUrl else "$backendBase$rawUrl"
+        try {
+            val player = narrationPlayer ?: MediaPlayer().also { narrationPlayer = it }
+            player.reset()
+            player.setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+            )
+            player.setDataSource(fullUrl)
+            player.setOnPreparedListener {
+                Log.d("MainActivity", "🗣️ Narration mp3 prepared: $fullUrl")
+                it.start()
+            }
+            player.setOnErrorListener { _, what, extra ->
+                Log.e("MainActivity", "🗣️ MediaPlayer error what=$what extra=$extra url=$fullUrl")
+                true // we've handled it; player will reset on next call
+            }
+            player.prepareAsync()
+            Log.d("MainActivity", "🗣️ Narration mp3 prepareAsync: $fullUrl")
+            result.success(null)
+        } catch (e: Throwable) {
+            Log.e("MainActivity", "🗣️ Failed to play narration mp3: ${e.message}")
+            result.error("PLAYBACK_FAILED", e.message, null)
+        }
+    }
+
+    /**
+     * Speak [text] through the narration TTS. Queues if the engine
+     * hasn't finished its async init yet. QUEUE_FLUSH means a fresh
+     * whisper interrupts any in-flight one — at our 30s spacing rule
+     * this is almost never the case, but it keeps the experience
+     * consistent if the user mashes the Replay button.
+     */
+    private fun speakNarration(text: String) {
+        val tts = narrationTts
+        if (tts == null || !narrationTtsReady) {
+            Log.d("MainActivity", "🗣️ Narration TTS not ready, queueing")
+            pendingNarrations.add(text)
+            return
+        }
+        val result = tts.speak(
+            text,
+            TextToSpeech.QUEUE_FLUSH,
+            null,
+            "narration_${System.currentTimeMillis()}",
+        )
+        // speak() returns SUCCESS (0) or ERROR (-1). ERROR is the
+        // silent-failure mode we need to surface — usually means the
+        // utterance was rejected because no voice data is installed.
+        if (result == TextToSpeech.ERROR) {
+            Log.e("MainActivity", "🗣️ TTS speak() returned ERROR — voice data probably missing")
+        } else {
+            Log.d("MainActivity", "🗣️ Narration spoken: \"${text.take(80)}...\"")
+        }
+    }
+
+    override fun onDestroy() {
+        Log.d("MainActivity", "🔻 onDestroy — releasing narration TTS + MediaPlayer")
+        narrationTts?.stop()
+        narrationTts?.shutdown()
+        narrationTts = null
+        narrationTtsReady = false
+        narrationPlayer?.release()
+        narrationPlayer = null
+        super.onDestroy()
     }
 
     override fun onPause() {

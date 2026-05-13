@@ -12,7 +12,14 @@ class RouteFact {
   final String articleUrl;
   final int wikipediaPageid;
   final String primary;
+  // Server-relative path to the pre-synthesized mp3 for `primary`.
+  // Null when TTS synthesis failed for this line — the device falls
+  // back to local Android TTS on the text.
+  final String? primaryAudioUrl;
   final List<String> followUps;
+  // Same length as `followUps`. Each entry mirrors `primaryAudioUrl`
+  // semantics for the corresponding follow-up line.
+  final List<String?> followUpAudioUrls;
   final bool isThin;
   final double distanceFromRouteMiles;
   final double rankedScore;
@@ -24,7 +31,9 @@ class RouteFact {
     required this.articleUrl,
     required this.wikipediaPageid,
     required this.primary,
+    this.primaryAudioUrl,
     this.followUps = const [],
+    this.followUpAudioUrls = const [],
     this.isThin = false,
     required this.distanceFromRouteMiles,
     required this.rankedScore,
@@ -37,7 +46,12 @@ class RouteFact {
         articleUrl: json['article_url'] as String,
         wikipediaPageid: json['wikipedia_pageid'] as int,
         primary: json['primary'] as String,
+        primaryAudioUrl: json['primary_audio_url'] as String?,
         followUps: (json['follow_ups'] as List?)?.cast<String>() ?? const [],
+        followUpAudioUrls: (json['follow_up_audio_urls'] as List?)
+                ?.map((e) => e as String?)
+                .toList() ??
+            const [],
         isThin: (json['is_thin'] as bool?) ?? false,
         distanceFromRouteMiles:
             (json['distance_from_route_miles'] as num).toDouble(),

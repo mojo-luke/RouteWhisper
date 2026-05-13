@@ -104,11 +104,29 @@ abstract class NavigationHostBridge {
 
   /// Speak [text] using the native voice player.
   ///
-  /// Phase 1 narration: routes through `MapboxVoiceInstructionsPlayer` so
-  /// it shares audio-focus management with turn-by-turn voice (no fighting
-  /// over the speaker; turn-by-turn always preempts).
-  /// **Native effect:** Mapbox player.play() with the given text.
+  /// Phase 1 narration text path: routes through Android's `TextToSpeech`
+  /// in MainActivity (robotic but always available). Used as a fallback
+  /// when the backend didn't synthesize an mp3 for the line.
+  /// **Native effect:** TextToSpeech.speak(text).
   Future<void> speakNarration({required String text});
+
+  /// Play a pre-synthesized mp3 from the backend audio endpoint.
+  ///
+  /// The premium-voice path. Backend has pre-rendered the narration
+  /// through OpenAI TTS at trip-prep time; the device just streams
+  /// the mp3. Falls back via `speakNarration` if the caller doesn't
+  /// have a URL.
+  /// **Native effect:** MediaPlayer.setDataSource(url) + start().
+  Future<void> playNarrationAudio({required String url});
+
+  /// Push the user's turn-by-turn voice preference to the native side.
+  ///
+  /// When false, MapActivity drops Mapbox `VoiceInstructions` instead of
+  /// generating + playing them — the map still draws the route and the
+  /// progress chip, just silently. Narration audio is unaffected.
+  /// **Native effect:** sets a flag MapActivity reads inside its
+  /// `VoiceInstructionsObserver`.
+  Future<void> setTurnByTurnVoiceEnabled({required bool enabled});
 
   /// Register the inbound-event handlers. Native invokes these via the
   /// underlying transport (method channel) and the bridge dispatches to the
@@ -350,6 +368,16 @@ class MethodChannelNavigationHostBridge implements NavigationHostBridge {
   @override
   Future<void> speakNarration({required String text}) async {
     await _channel.invokeMethod('speakNarration', {'text': text});
+  }
+
+  @override
+  Future<void> playNarrationAudio({required String url}) async {
+    await _channel.invokeMethod('playNarrationAudio', {'url': url});
+  }
+
+  @override
+  Future<void> setTurnByTurnVoiceEnabled({required bool enabled}) async {
+    await _channel.invokeMethod('setTurnByTurnVoiceEnabled', {'enabled': enabled});
   }
 
   @override

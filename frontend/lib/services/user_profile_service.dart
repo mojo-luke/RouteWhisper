@@ -48,6 +48,10 @@ class UserProfile {
   final int recommendationsMaxPerTrip;
   final int recommendationsMinGapMinutes;
 
+  // Voice controls. Turn-by-turn defaults on to preserve legacy nav
+  // behavior; users who find the Mapbox voice grating turn it off.
+  final bool turnByTurnVoiceEnabled;
+
   const UserProfile({
     this.preferredPoiTypes = const [],
     this.defaultTimeBudgetMinutes,
@@ -56,6 +60,7 @@ class UserProfile {
     this.recommendationsEnabled = true,
     this.recommendationsMaxPerTrip = 3,
     this.recommendationsMinGapMinutes = 15,
+    this.turnByTurnVoiceEnabled = true,
   });
 
   factory UserProfile.fromJson(Map<String, dynamic> json) => UserProfile(
@@ -74,6 +79,8 @@ class UserProfile {
             (json['recommendations_max_per_trip'] as int?) ?? 3,
         recommendationsMinGapMinutes:
             (json['recommendations_min_gap_minutes'] as int?) ?? 15,
+        turnByTurnVoiceEnabled:
+            (json['turn_by_turn_voice_enabled'] as bool?) ?? true,
       );
 
   Map<String, dynamic> toJson() => {
@@ -84,6 +91,7 @@ class UserProfile {
         'recommendations_enabled': recommendationsEnabled,
         'recommendations_max_per_trip': recommendationsMaxPerTrip,
         'recommendations_min_gap_minutes': recommendationsMinGapMinutes,
+        'turn_by_turn_voice_enabled': turnByTurnVoiceEnabled,
       };
 
   UserProfile copyWith({
@@ -95,6 +103,7 @@ class UserProfile {
     bool? recommendationsEnabled,
     int? recommendationsMaxPerTrip,
     int? recommendationsMinGapMinutes,
+    bool? turnByTurnVoiceEnabled,
   }) =>
       UserProfile(
         preferredPoiTypes: preferredPoiTypes ?? this.preferredPoiTypes,
@@ -109,6 +118,8 @@ class UserProfile {
             recommendationsMaxPerTrip ?? this.recommendationsMaxPerTrip,
         recommendationsMinGapMinutes:
             recommendationsMinGapMinutes ?? this.recommendationsMinGapMinutes,
+        turnByTurnVoiceEnabled:
+            turnByTurnVoiceEnabled ?? this.turnByTurnVoiceEnabled,
       );
 }
 

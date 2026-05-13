@@ -37,6 +37,7 @@ from app.utils.polyline import (
 from app.auth import CurrentUser, get_current_user
 from app.database import (
     init_mongodb,
+    POIContent,
     Trip,
     UserProfile,
     WaypointStopHistoryDoc,
@@ -545,6 +546,9 @@ class UserProfilePayload(BaseModel):
     recommendations_max_per_trip: int = 3
     recommendations_min_gap_minutes: int = 15
 
+    # Voice controls.
+    turn_by_turn_voice_enabled: bool = True
+
 
 async def _get_or_create_profile(user_id: str) -> UserProfile:
     profile = await UserProfile.find_one(UserProfile.user_id == user_id)
@@ -566,6 +570,7 @@ async def get_user_profile(user: CurrentUser = Depends(get_current_user)):
         recommendations_enabled=p.recommendations_enabled,
         recommendations_max_per_trip=p.recommendations_max_per_trip,
         recommendations_min_gap_minutes=p.recommendations_min_gap_minutes,
+        turn_by_turn_voice_enabled=p.turn_by_turn_voice_enabled,
     )
 
 
@@ -583,6 +588,7 @@ async def update_user_profile(
     p.recommendations_enabled = payload.recommendations_enabled
     p.recommendations_max_per_trip = payload.recommendations_max_per_trip
     p.recommendations_min_gap_minutes = payload.recommendations_min_gap_minutes
+    p.turn_by_turn_voice_enabled = payload.turn_by_turn_voice_enabled
     p.updated_at = datetime.utcnow()
     await p.save()
     return payload
@@ -757,14 +763,23 @@ class RouteFactsRequest(BaseModel):
 
 
 class RouteFact(BaseModel):
-    """One whisper-ready fact returned to the client."""
+    """One whisper-ready fact returned to the client.
+
+    `primary_audio_url` and `follow_up_audio_urls` point to mp3 files
+    pre-synthesized by OpenAI TTS at trip-prep time. When present, the
+    device plays the mp3 directly (premium voice). When null (synthesis
+    failed or the env doesn't have OPENAI_API_KEY), the device falls
+    back to local Android TTS using the text fields.
+    """
     lat: float
     lng: float
     article_title: str
     article_url: str
     wikipedia_pageid: int
     primary: str
+    primary_audio_url: Optional[str] = None
     follow_ups: list[str] = []
+    follow_up_audio_urls: list[Optional[str]] = []
     is_thin: bool = False
     distance_from_route_miles: float
     ranked_score: float
@@ -842,17 +857,25 @@ async def route_facts(
         await redis.set(route_key, "[]", ex=_ROUTE_FACTS_TTL_SECONDS)
         return {"facts": []}
 
-    # 3) Per-article summarization with POIContent cache
+    # 3) Per-article summarization + TTS synthesis with POIContent cache
+    from app.services.openai_tts import TtsSynthesizer
     summarizer = LLMSummarizer()
+    tts = TtsSynthesizer()
+    # Reopen a wiki client for cache-miss extract fetches. We keep
+    # the same instance for the whole batch so the connection pool
+    # is reused and concurrency is shared with the existing geosearch
+    # semaphore inside the service.
+    wiki_for_extracts = WikipediaFactsService()
     facts_out: list[dict] = []
-    # Summarize in parallel via to_thread (Anthropic SDK is sync).
-    # Bounded concurrency so we don't spike costs or rate limits.
+    # Summarize in parallel via to_thread (Anthropic + OpenAI SDKs are
+    # both sync). Bounded concurrency so we don't spike costs or rate
+    # limits.
     sem = asyncio.Semaphore(4)
 
     async def _process(ranked_fact):
         c = ranked_fact.candidate
         async with sem:
-            bundle = await _get_or_summarize(summarizer, c)
+            bundle = await _get_or_summarize(summarizer, tts, wiki_for_extracts, c)
         return {
             "lat": c.lat,
             "lng": c.lng,
@@ -860,13 +883,21 @@ async def route_facts(
             "article_url": c.url,
             "wikipedia_pageid": c.wikipedia_pageid,
             "primary": bundle["primary"],
+            "primary_audio_url": bundle["primary_audio_url"],
             "follow_ups": bundle["follow_ups"],
+            "follow_up_audio_urls": bundle["follow_up_audio_urls"],
             "is_thin": bundle["is_thin"],
             "distance_from_route_miles": c.distance_from_route_miles,
             "ranked_score": ranked_fact.score,
         }
 
-    facts_out = await asyncio.gather(*[_process(r) for r in ranked])
+    try:
+        facts_out = await asyncio.gather(*[_process(r) for r in ranked])
+    finally:
+        await wiki_for_extracts.close()
+
+    # Skip facts whose summarization failed entirely (no primary text).
+    facts_out = [f for f in facts_out if f.get("primary")]
 
     # 4) Cache the assembled envelope
     await redis.set(
@@ -888,34 +919,103 @@ def _route_facts_cache_key(polyline: str, interests: list[dict]) -> str:
     # regardless of dict key order.
     h.update(json.dumps(interests, sort_keys=True, default=str).encode()
              if interests else b"[]")
-    return f"route_facts:v1:{h.hexdigest()}"
+    # v2 forces a refresh after the TTS model bump so previously-
+    # cached routes don't keep serving the old voice. Bump again on
+    # any change that affects response shape.
+    return f"route_facts:v2:{h.hexdigest()}"
 
 
-async def _get_or_summarize(summarizer, candidate) -> dict:
+# Bump this when the TTS model or prompt changes meaningfully. Old
+# POIContent entries with a different version get treated as a
+# cache miss, forcing re-synthesis with the current voice / model.
+# Text content (primary/follow_ups) is preserved from cache when
+# possible to avoid re-paying for the LLM summarization.
+_TTS_VERSION = "v2-gpt4omini-nova"
+
+
+async def _get_or_summarize(summarizer, tts, wiki, candidate) -> dict:
     """POIContent-level cache: keyed by wikipedia_pageid. Hits across
-    users and routes. On miss, call the LLM and persist."""
+    users and routes. On miss, fetch the Wikipedia extract, call the
+    LLM, synthesize TTS audio for primary + each follow-up, persist
+    the whole bundle. The extract fetch is lazy — we only hit
+    Wikipedia for articles whose text isn't already cached, which
+    keeps us well below Wikipedia's bot rate limits on repeat trips.
+
+    Returned dict shape includes both the text and the audio URLs
+    (string paths the device prepends its base URL to). Audio URLs
+    may be null if synthesis failed for a particular line — the
+    device falls back to local TTS for those.
+    """
     import asyncio
     from app.database import POIContent
     pageid = candidate.wikipedia_pageid
 
     existing = await POIContent.find_one(POIContent.poi_id == f"wiki:{pageid}")
+    cached_primary: str | None = None
+    cached_follow_ups: list[str] | None = None
+    cached_is_thin: bool = False
     if existing and existing.facts:
-        # Stored shape: facts[0] is the SummaryBundle dict.
         first = existing.facts[0] if isinstance(existing.facts[0], dict) else {}
-        if "primary" in first:
-            return {
-                "primary": first.get("primary", ""),
-                "follow_ups": first.get("follow_ups", []),
-                "is_thin": bool(first.get("is_thin", False)),
-            }
+        cached_primary = first.get("primary")
+        cached_follow_ups = first.get("follow_ups")
+        cached_is_thin = bool(first.get("is_thin", False))
+        # Full cache hit: audio synthesized with current model AND
+        # actual bytes present. Skip extract + LLM + TTS entirely.
+        if (
+            cached_primary
+            and first.get("tts_version") == _TTS_VERSION
+            and first.get("primary_audio")
+        ):
+            return _bundle_to_response(first, pageid)
 
-    # Cache miss — invoke the LLM. The SDK is sync; offload to a
-    # worker thread so we don't block the event loop.
-    bundle = await asyncio.to_thread(
-        summarizer.summarize_article,
-        candidate.title,
-        candidate.extract,
-    )
+    # Partial cache hit: text exists from a prior LLM run but audio
+    # needs refreshing (TTS version bumped). Reuse text, skip the
+    # Wikipedia + LLM round-trip, just re-synthesize.
+    if cached_primary is not None and cached_follow_ups is not None:
+        bundle = SimpleNamespaceLike(
+            primary=cached_primary,
+            follow_ups=cached_follow_ups,
+            is_thin=cached_is_thin,
+        )
+    else:
+        # Full miss: fetch the Wikipedia extract NOW (didn't fetch
+        # upfront, only on demand) and summarize.
+        extract = candidate.extract or await wiki.fetch_extract(pageid)
+        if not extract:
+            # Wikipedia 429'd or the article disappeared — produce
+            # a placeholder bundle so the orchestration layer doesn't
+            # blow up. The endpoint filters these out before
+            # returning to the device.
+            return {
+                "primary": "",
+                "primary_audio_url": None,
+                "follow_ups": [],
+                "follow_up_audio_urls": [],
+                "is_thin": True,
+            }
+        bundle = await asyncio.to_thread(
+            summarizer.summarize_article,
+            candidate.title,
+            extract,
+        )
+
+    # Synthesize audio for each text line. tts.synthesize returns
+    # None on failure; we persist None and the response surfaces a
+    # null audio_url so the device falls back to local TTS for
+    # that specific line.
+    primary_audio = await asyncio.to_thread(tts.synthesize, bundle.primary)
+    follow_ups_audio = await asyncio.gather(*[
+        asyncio.to_thread(tts.synthesize, fu) for fu in bundle.follow_ups
+    ])
+
+    stored = {
+        "primary": bundle.primary,
+        "primary_audio": primary_audio,
+        "follow_ups": bundle.follow_ups,
+        "follow_ups_audio": list(follow_ups_audio),
+        "is_thin": bundle.is_thin,
+        "tts_version": _TTS_VERSION,
+    }
 
     # Persist back to POIContent for future trips.
     doc = existing or POIContent(
@@ -926,19 +1026,99 @@ async def _get_or_summarize(summarizer, candidate) -> dict:
         longitude=candidate.lng,
         metadata={"source": "wikipedia", "pageid": pageid, "url": candidate.url},
     )
-    doc.facts = [{
-        "primary": bundle.primary,
-        "follow_ups": bundle.follow_ups,
-        "is_thin": bundle.is_thin,
-    }]
+    doc.facts = [stored]
     doc.metadata = {**(doc.metadata or {}), "wikipedia_pageid": pageid}
     await doc.save()
 
+    return _bundle_to_response(stored, pageid)
+
+
+class SimpleNamespaceLike:
+    """Tiny shim so the cached-text fast path can produce something
+    with the same `.primary` / `.follow_ups` / `.is_thin` attributes
+    the LLM summarizer returns. Avoids importing SummaryBundle here
+    just to repackage cached strings."""
+    def __init__(self, primary: str, follow_ups: list, is_thin: bool):
+        self.primary = primary
+        self.follow_ups = list(follow_ups)
+        self.is_thin = is_thin
+
+
+def _bundle_to_response(stored: dict, pageid: int) -> dict:
+    """Convert the POIContent-stored bundle into the response shape the
+    device consumes. Replaces the raw audio bytes with audio URLs
+    pointing at `/api/v1/audio/{audio_id}` — the device fetches the
+    bytes on demand rather than receiving them inline (keeps the
+    /route/facts JSON small).
+    """
+    primary_audio_url = (
+        f"/api/v1/audio/wiki-{pageid}-primary"
+        if stored.get("primary_audio") else None
+    )
+    follow_ups = stored.get("follow_ups", []) or []
+    follow_ups_audio = stored.get("follow_ups_audio", []) or []
+    follow_up_audio_urls = []
+    for i in range(len(follow_ups)):
+        has_audio = (
+            i < len(follow_ups_audio)
+            and follow_ups_audio[i] is not None
+            and len(follow_ups_audio[i]) > 0
+        )
+        follow_up_audio_urls.append(
+            f"/api/v1/audio/wiki-{pageid}-fu-{i}" if has_audio else None
+        )
     return {
-        "primary": bundle.primary,
-        "follow_ups": bundle.follow_ups,
-        "is_thin": bundle.is_thin,
+        "primary": stored.get("primary", ""),
+        "primary_audio_url": primary_audio_url,
+        "follow_ups": follow_ups,
+        "follow_up_audio_urls": follow_up_audio_urls,
+        "is_thin": bool(stored.get("is_thin", False)),
     }
+
+
+@app.get("/api/v1/audio/wiki-{pageid}-primary")
+async def audio_primary(pageid: int):
+    """Serve the pre-synthesized mp3 for a Wikipedia article's primary
+    narration. Stored in POIContent.facts[0].primary_audio. No auth
+    on this endpoint — audio URLs are not secret and gating them
+    would force the device to attach an auth header to MediaPlayer
+    which complicates Android playback. The audio is the same content
+    as the public Wikipedia article, just spoken."""
+    return await _serve_audio(pageid, "primary")
+
+
+@app.get("/api/v1/audio/wiki-{pageid}-fu-{index}")
+async def audio_follow_up(pageid: int, index: int):
+    """Serve the pre-synthesized mp3 for the Nth follow-up of a
+    Wikipedia article's narration. Mirror of /primary above; same
+    rationale for no auth."""
+    return await _serve_audio(pageid, "fu", index=index)
+
+
+async def _serve_audio(pageid: int, kind: str, *, index: int = -1):
+    """Look up the cached mp3 bytes in POIContent and return them with
+    audio/mpeg content type. 404 if the page or audio doesn't exist."""
+    from fastapi.responses import Response
+    doc = await POIContent.find_one(POIContent.poi_id == f"wiki:{pageid}")
+    if doc is None or not doc.facts:
+        raise HTTPException(status_code=404, detail="No audio for that pageid")
+    first = doc.facts[0] if isinstance(doc.facts[0], dict) else {}
+    audio: Optional[bytes] = None
+    if kind == "primary":
+        audio = first.get("primary_audio")
+    elif kind == "fu":
+        fus = first.get("follow_ups_audio") or []
+        if 0 <= index < len(fus):
+            audio = fus[index]
+    if not audio:
+        raise HTTPException(status_code=404, detail="No audio bytes")
+    return Response(
+        content=bytes(audio),
+        media_type="audio/mpeg",
+        # Browsers / MediaPlayer cache aggressively — narration content
+        # never changes once synthesized.
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 class GeocodeCandidate(BaseModel):

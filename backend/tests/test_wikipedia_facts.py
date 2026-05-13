@@ -124,10 +124,12 @@ def _fake_handler(request: httpx.Request) -> httpx.Response:
 
 
 @pytest.mark.asyncio
-async def test_geosearch_along_polyline_returns_dedupe_extracts():
+async def test_geosearch_along_polyline_returns_geosearch_only():
     # A trivial polyline of two SF coords. Every sample will hit
     # the same geosearch fixture, so by-pageid dedupe should
     # collapse N samples × 2 results → 2 unique FactCandidates.
+    # Extracts are NOT fetched here — that's now the caller's
+    # responsibility (cache-miss path only).
     transport = httpx.MockTransport(_fake_handler)
     client = httpx.AsyncClient(transport=transport)
     service = WikipediaFactsService(client=client)
@@ -154,9 +156,38 @@ async def test_geosearch_along_polyline_returns_dedupe_extracts():
     assert candidates[1].wikipedia_pageid == 222
     # Each candidate has a URL pointing back to Wikipedia
     assert candidates[0].url == "https://en.wikipedia.org/?curid=111"
-    # Extracts present
-    assert "San Francisco" in candidates[0].extract
-    assert "Coit Tower" in candidates[1].extract
+    # Extracts are deferred — they get fetched on demand by the
+    # orchestration layer for cache-miss articles only.
+    assert candidates[0].extract == ""
+    assert candidates[1].extract == ""
+
+
+@pytest.mark.asyncio
+async def test_fetch_extract_returns_text():
+    # The orchestration layer calls fetch_extract(pageid) for any
+    # article whose text isn't cached. Verifies the public wrapper
+    # works and returns the article extract for a known pageid.
+    transport = httpx.MockTransport(_fake_handler)
+    client = httpx.AsyncClient(transport=transport)
+    service = WikipediaFactsService(client=client)
+    extract = await service.fetch_extract(111)
+    await service.close()
+    assert "San Francisco" in extract
+
+
+@pytest.mark.asyncio
+async def test_fetch_extract_returns_empty_on_429():
+    # When Wikipedia rate-limits us, fetch_extract returns "" so the
+    # orchestration layer can short-circuit to a placeholder bundle
+    # rather than try to summarize an empty string.
+    def _ratelimited(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, json={"error": "rate limited"})
+    transport = httpx.MockTransport(_ratelimited)
+    client = httpx.AsyncClient(transport=transport)
+    service = WikipediaFactsService(client=client)
+    extract = await service.fetch_extract(111)
+    await service.close()
+    assert extract == ""
 
 
 @pytest.mark.asyncio
