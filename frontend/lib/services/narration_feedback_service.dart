@@ -15,6 +15,13 @@ class NarrationEvent {
   static const String replayed = 'replayed';
   static const String tellMeMore = 'tell_me_more';
   static const String dismissed = 'dismissed';
+  // Strongest engagement signal short of an actual visit — the user
+  // asked the app to re-route to this place. Closes the loop from
+  // "whisper played" to "user changed behavior."
+  static const String takeMeThereTapped = 'take_me_there_tapped';
+  // Mapbox arrived at the take-me-there waypoint. Fires from the
+  // existing waypoint-arrival callback.
+  static const String visited = 'visited';
 }
 
 /// One entry in the user's saved-facts list.

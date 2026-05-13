@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter/material.dart';
+import '../models/route_fact.dart';
 import '../models/waypoint.dart';
 import '../widgets/poi_confirmation_sheet.dart';
 import '../widgets/poi_dashboard.dart';
@@ -53,11 +54,59 @@ class NavigationController extends ChangeNotifier {
       onNarrationSave: (_) => NavigationService.narration.toggleSaveActive(),
       onNarrationDismiss: (_) =>
           NavigationService.narration.dismissActive(),
+      onNarrationTakeMeThere: (_) {
+        NavigationService.narration.takeMeThere();
+      },
     ));
     // Bind the narration service to the same bridge so its
     // speakNarration calls hit the same native handler.
     NavigationService.narration.bindBridge(_bridge);
+    // Install the "take me there" implementation — NarrationService
+    // can't import navigation_service.dart (circular), so we inject
+    // the orchestration here.
+    NavigationService.narration.onTakeMeThere = _handleTakeMeThere;
     debugPrint('🎯 NavigationController initialized');
+  }
+
+  /// Add the narrated fact as an intermediate waypoint and (if
+  /// we're currently navigating) refresh the route in-place. Mirrors
+  /// the recommendation accept flow exactly so the visual + nav
+  /// behavior is consistent between the two paths.
+  Future<void> _handleTakeMeThere(RouteFact fact) async {
+    final waypoint = Waypoint.manual(
+      name: fact.articleTitle,
+      latitude: fact.lat,
+      longitude: fact.lng,
+      order: NavigationService.waypointManager.getWaypoints().length,
+    );
+    NavigationService.waypointManager.addWaypoint(waypoint);
+    // Tell NarrationService this waypoint maps to this fact so the
+    // `visited` event fires when Mapbox arrives at it.
+    NavigationService.narration.registerTakeMeThereWaypoint(
+      fact.wikipediaPageid,
+      waypoint.id,
+    );
+
+    if (NavigationService.isNavigating &&
+        NavigationService.currentRoute != null) {
+      final route = NavigationService.currentRoute!;
+      final intermediates = NavigationService.waypointManager
+          .getWaypoints()
+          .where((w) =>
+              w.type != WaypointType.origin &&
+              w.type != WaypointType.destination)
+          .toList();
+      await updateNavigationRoute(
+        originLat: route.originLat,
+        originLng: route.originLng,
+        destLat: route.destLat,
+        destLng: route.destLng,
+        waypoints:
+            intermediates.map((w) => [w.longitude, w.latitude]).toList(),
+        waypointNames: intermediates.map((w) => w.name).toList(),
+      );
+    }
+    debugPrint('🗣️ Take me there: added ${waypoint.name} as waypoint');
   }
 
   NavigationHostBridge get bridge => _bridge;
@@ -189,7 +238,11 @@ class NavigationController extends ChangeNotifier {
         .toList();
 
     if (legIndex >= 0 && legIndex < intermediates.length) {
-      NavigationService.markWaypointArrival(intermediates[legIndex]);
+      final arrived = intermediates[legIndex];
+      NavigationService.markWaypointArrival(arrived);
+      // If this waypoint was added via Take-me-there, NarrationService
+      // will see itself in its take-me-there map and emit `visited`.
+      NavigationService.narration.onWaypointArrived(arrived.id);
     } else {
       debugPrint(
         '⚠️ legIndex $legIndex out of range (${intermediates.length})',

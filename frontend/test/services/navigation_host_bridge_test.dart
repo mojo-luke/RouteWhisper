@@ -210,6 +210,8 @@ void main() {
         onNarrationTellMore: (pageid) => received['narrationTellMore'] = pageid,
         onNarrationSave: (pageid) => received['narrationSave'] = pageid,
         onNarrationDismiss: (pageid) => received['narrationDismiss'] = pageid,
+        onNarrationTakeMeThere: (pageid) =>
+            received['narrationTakeMeThere'] = pageid,
       ));
 
       // Send each native→Flutter call through the channel and verify
@@ -337,4 +339,5 @@ NavigationHostHandlers _throwingHandlers() => NavigationHostHandlers(
       onNarrationTellMore: (_) => throw StateError('should not fire'),
       onNarrationSave: (_) => throw StateError('should not fire'),
       onNarrationDismiss: (_) => throw StateError('should not fire'),
+      onNarrationTakeMeThere: (_) => throw StateError('should not fire'),
     );

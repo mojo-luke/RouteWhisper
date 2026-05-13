@@ -352,13 +352,25 @@
                     android:id="@+id/narrationMoreButton"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:layout_weight="2"
+                    android:layout_weight="1"
                     android:layout_marginStart="10dp"
-                    android:text="Tell me more"
+                    android:text="More"
                     android:textColor="@android:color/white"
-                    android:background="@drawable/recommendation_button_filled" />
+                    android:background="@drawable/recommendation_button_outline" />
 
             </LinearLayout>
+
+            <!-- Take me there: most consequential action on the banner,
+                 gets full-width filled-button treatment. Tap re-routes
+                 in place and adds the narrated fact as a waypoint. -->
+            <Button
+                android:id="@+id/narrationTakeMeThereButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:text="Take me there"
+                android:textColor="@android:color/white"
+                android:background="@drawable/recommendation_button_filled" />
 
         </LinearLayout>
 

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../models/route_fact.dart';
 import '../services/narration_service.dart';
 import '../services/navigation_service.dart';
 
@@ -144,6 +145,19 @@ class _NarrationCardState extends State<NarrationCard> {
                 ),
               ],
             ),
+            // Take me there — most consequential action, gets the
+            // prominent filled button. Only enabled while navigating
+            // since the path is "add as upcoming waypoint." Tapping
+            // when not navigating shows a hint.
+            const SizedBox(height: 4),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                icon: const Icon(Icons.directions, size: 18),
+                label: Text('Take me to ${active.fact.articleTitle}'),
+                onPressed: () => _handleTakeMeThere(context, active.fact),
+              ),
+            ),
             if (!_service.canTellMore && (active.fact.isThin || _outOfFollowUps(active)))
               const Padding(
                 padding: EdgeInsets.only(top: 2),
@@ -176,4 +190,27 @@ class _NarrationCardState extends State<NarrationCard> {
 
   bool _outOfFollowUps(active) =>
       _service.followUpIndex >= active.fact.followUps.length;
+
+  void _handleTakeMeThere(BuildContext context, RouteFact fact) {
+    if (!NavigationService.isNavigating) {
+      // Outside an active trip, "take me there" can't add a
+      // waypoint mid-flight. Surface a hint rather than silently
+      // do nothing.
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Start a trip first to navigate here.'),
+          duration: Duration(seconds: 3),
+        ),
+      );
+      return;
+    }
+    final fired = _service.takeMeThere();
+    if (!fired) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Routing to ${fact.articleTitle}…'),
+        duration: const Duration(seconds: 4),
+      ),
+    );
+  }
 }

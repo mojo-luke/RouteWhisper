@@ -1240,10 +1240,16 @@ async def _serve_audio(pageid: int, kind: str, *, index: int = -1):
 
 
 _ALLOWED_INTERACTION_EVENTS = {
-    "played",        # narration fired (baseline)
-    "replayed",      # Replay tapped (strong positive)
-    "tell_me_more",  # Tell me more tapped (strong positive)
-    "dismissed",     # Dismiss tapped before audio ended (negative)
+    "played",               # narration fired (baseline)
+    "replayed",             # Replay tapped (strong positive)
+    "tell_me_more",         # Tell me more tapped (strong positive)
+    "dismissed",            # Dismiss tapped before audio ended (negative)
+    "take_me_there_tapped", # User asked the app to re-route there
+                            # (strongest engagement signal short of an
+                            # actual visit). High-confidence "this
+                            # whisper changed behavior."
+    "visited",              # Mapbox arrived at the take-me-there
+                            # waypoint. The closed loop.
 }
 
 

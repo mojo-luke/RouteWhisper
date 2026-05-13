@@ -46,6 +46,20 @@ class NarrationService extends ChangeNotifier {
     _bridge = bridge;
   }
 
+  /// Callback fired when the user taps "Take me there." NavigationController
+  /// installs the implementation (adds a Waypoint to WaypointManager and
+  /// calls updateNavigationRoute) so NarrationService doesn't need to
+  /// import navigation_service.dart and create a circular dependency.
+  void Function(RouteFact fact)? onTakeMeThere;
+
+  /// Returns the active fact's wikipedia_pageid, or null if no card
+  /// is currently surfaced. Used by NavigationController when Mapbox
+  /// fires a waypoint-arrival event to figure out which fact got
+  /// "visited" — we don't currently track which waypoint was added
+  /// for which narration, so the heuristic is "the active narration
+  /// at arrival time."
+  int? get activePageid => _active?.fact.wikipediaPageid;
+
   /// Narration mode (Auto / Tap-to-hear / Off). Pushed from
   /// UserProfile at trip start; mutates how `_fire` behaves:
   ///
@@ -169,6 +183,7 @@ class NarrationService extends ChangeNotifier {
     _followUpIndex = 0;
     _lastSpokeAt = null;
     _isLoading = false;
+    _pageidByTakeMeThereWaypoint.clear();
     _bridge?.clearNarration();
     _bridge?.clearNarrationMarkers();
     notifyListeners();
@@ -422,6 +437,54 @@ class NarrationService extends ChangeNotifier {
     _followUpIndex = 0;
     _bridge?.clearNarration();
     notifyListeners();
+  }
+
+  /// User asked the app to re-route to the currently-active fact.
+  /// Records the high-confidence engagement event and hands off to
+  /// the registered `onTakeMeThere` callback for the actual waypoint
+  /// + route-update work (so NarrationService doesn't have to import
+  /// the navigation stack and create a circular dep).
+  ///
+  /// Returns true if there was an active narration to act on; false
+  /// otherwise. Caller can show a snackbar based on the return.
+  bool takeMeThere() {
+    final a = _active;
+    if (a == null) return false;
+    NarrationFeedbackService.recordEvent(
+      pageid: a.fact.wikipediaPageid,
+      eventType: NarrationEvent.takeMeThereTapped,
+      tripId: _currentTripId,
+    );
+    onTakeMeThere?.call(a.fact);
+    return true;
+  }
+
+  /// Map of waypoint-id → wikipedia_pageid for waypoints we added
+  /// via Take-me-there. NavigationController populates this when the
+  /// waypoint is created, and consults it on Mapbox arrival to know
+  /// which (if any) narrated fact got "visited."
+  final Map<String, int> _pageidByTakeMeThereWaypoint = {};
+
+  /// Called by NavigationController right after a Take-me-there
+  /// waypoint is added to the route, so we can later attribute the
+  /// arrival back to the fact it was created for.
+  void registerTakeMeThereWaypoint(int pageid, String waypointId) {
+    _pageidByTakeMeThereWaypoint[waypointId] = pageid;
+  }
+
+  /// Called when Mapbox fires arrival at a waypoint. Looks up whether
+  /// the waypoint was a take-me-there destination; if so, records
+  /// the `visited` event — the closed-loop signal that the whisper
+  /// successfully changed real-world behavior.
+  void onWaypointArrived(String waypointId) {
+    final pageid = _pageidByTakeMeThereWaypoint.remove(waypointId);
+    if (pageid == null) return;
+    debugPrint('🗣️ Visited: pageid=$pageid (was a take-me-there waypoint)');
+    NarrationFeedbackService.recordEvent(
+      pageid: pageid,
+      eventType: NarrationEvent.visited,
+      tripId: _currentTripId,
+    );
   }
 
   /// Toggle the save state of the currently-active fact. Optimistic:

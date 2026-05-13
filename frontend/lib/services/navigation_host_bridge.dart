@@ -278,6 +278,12 @@ class NavigationHostHandlers {
   /// the active card.
   final void Function(int pageid) onNarrationDismiss;
 
+  /// Native banner "Take me there" tapped — NarrationService routes
+  /// to the active fact (records take_me_there_tapped + invokes the
+  /// take-me-there callback that adds the waypoint + updates the
+  /// route).
+  final void Function(int pageid) onNarrationTakeMeThere;
+
   /// Native pushes the current vehicle location at the cadence Mapbox's
   /// location observer fires (typically every ~1s while driving). Used
   /// by NarrationService to trigger whispers on proximity to facts.
@@ -312,6 +318,7 @@ class NavigationHostHandlers {
     required this.onNarrationTellMore,
     required this.onNarrationSave,
     required this.onNarrationDismiss,
+    required this.onNarrationTakeMeThere,
   });
 }
 
@@ -595,6 +602,10 @@ class MethodChannelNavigationHostBridge implements NavigationHostBridge {
 
       case 'narrationDismiss':
         h.onNarrationDismiss((call.arguments as Map)['pageid'] as int);
+        return null;
+
+      case 'narrationTakeMeThere':
+        h.onNarrationTakeMeThere((call.arguments as Map)['pageid'] as int);
         return null;
 
       case 'locationUpdate':

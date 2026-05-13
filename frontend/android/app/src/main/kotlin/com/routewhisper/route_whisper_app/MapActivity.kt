@@ -168,6 +168,7 @@ class MapActivity : AppCompatActivity() {
     private lateinit var narrationPrimaryText: TextView
     private lateinit var narrationReplayButton: View
     private lateinit var narrationMoreButton: Button
+    private lateinit var narrationTakeMeThereButton: Button
     private lateinit var narrationSaveButton: android.widget.ImageButton
     private lateinit var narrationDismissButton: View
     // Pageid of the currently surfaced narration — stale-tap guard
@@ -277,6 +278,7 @@ class MapActivity : AppCompatActivity() {
         narrationPrimaryText = findViewById(R.id.narrationPrimary)
         narrationReplayButton = findViewById(R.id.narrationReplayButton)
         narrationMoreButton = findViewById(R.id.narrationMoreButton)
+        narrationTakeMeThereButton = findViewById(R.id.narrationTakeMeThereButton)
         narrationSaveButton = findViewById(R.id.narrationSaveButton)
         narrationDismissButton = findViewById(R.id.narrationDismissButton)
         narrationReplayButton.setOnClickListener {
@@ -306,6 +308,21 @@ class MapActivity : AppCompatActivity() {
             MainActivity.methodChannelInstance?.invokeMethod(
                 "narrationDismiss", mapOf("pageid" to pageid),
             )
+            hideNarrationBanner()
+        }
+        narrationTakeMeThereButton.setOnClickListener {
+            val pageid = currentNarrationPageid ?: return@setOnClickListener
+            MainActivity.methodChannelInstance?.invokeMethod(
+                "narrationTakeMeThere", mapOf("pageid" to pageid),
+            )
+            // Surface a quick confirmation so the user knows we
+            // heard them. The actual route re-fit happens on the
+            // Flutter side and may take a moment.
+            Snackbar.make(
+                mapView,
+                "Routing you there…",
+                Snackbar.LENGTH_LONG,
+            ).show()
             hideNarrationBanner()
         }
 
