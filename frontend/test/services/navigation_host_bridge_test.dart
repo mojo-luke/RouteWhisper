@@ -206,6 +206,10 @@ void main() {
           speedMph,
           distanceAlongRouteMeters,
         ],
+        onNarrationReplay: (pageid) => received['narrationReplay'] = pageid,
+        onNarrationTellMore: (pageid) => received['narrationTellMore'] = pageid,
+        onNarrationSave: (pageid) => received['narrationSave'] = pageid,
+        onNarrationDismiss: (pageid) => received['narrationDismiss'] = pageid,
       ));
 
       // Send each native→Flutter call through the channel and verify
@@ -329,4 +333,8 @@ NavigationHostHandlers _throwingHandlers() => NavigationHostHandlers(
         required distanceAlongRouteMeters,
       }) =>
           throw StateError('should not fire'),
+      onNarrationReplay: (_) => throw StateError('should not fire'),
+      onNarrationTellMore: (_) => throw StateError('should not fire'),
+      onNarrationSave: (_) => throw StateError('should not fire'),
+      onNarrationDismiss: (_) => throw StateError('should not fire'),
     );

@@ -30,6 +30,7 @@ from app.utils.polyline import (
     calculate_distance_miles,
     decode_polyline,
     detect_trip_scale,
+    point_to_line_distance,
 )
 
 logger = logging.getLogger(__name__)
@@ -300,11 +301,15 @@ def _min_distance_to_route(
     point: tuple[float, float],
     route: list[tuple[float, float]],
 ) -> float:
-    """Minimum distance in miles from a point to any vertex of the
-    route. Cheap approximation — for our purposes (`is this article
-    near the road or 30 miles off?`) the vertex-distance is plenty
-    accurate. Don't use this for routing decisions.
+    """Minimum distance in miles from a point to the route polyline.
+
+    Uses proper line-distance (via shapely) rather than nearest-
+    vertex distance. The vertex-only approximation we had earlier
+    badly underestimated distance on long straight stretches with
+    few vertices: a building 250m off the actual road but 100m from
+    one of the endpoints would report 100m and pass our 160m
+    landmark cap, even though the user couldn't see it from the road.
     """
     if not route:
         return float("inf")
-    return min(calculate_distance_miles(point, vertex) for vertex in route)
+    return point_to_line_distance(point, route)

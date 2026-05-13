@@ -47,6 +47,9 @@ class FakeNavigationHostBridge implements NavigationHostBridge {
   Object? addNarrationMarkerError;
   Object? setActiveNarrationMarkerError;
   Object? clearNarrationMarkersError;
+  Object? setNarrationError;
+  Object? setNarrationSavedError;
+  Object? clearNarrationError;
 
   NavigationHostHandlers? _handlers;
 
@@ -293,6 +296,48 @@ class FakeNavigationHostBridge implements NavigationHostBridge {
     final err = clearNarrationMarkersError;
     if (err != null) {
       clearNarrationMarkersError = null;
+      throw err;
+    }
+  }
+
+  @override
+  Future<void> setNarration({
+    required int pageid,
+    required String title,
+    required String primary,
+    required bool canTellMore,
+    required bool isSaved,
+  }) async {
+    sentCalls.add(RecordedCall('setNarration', {
+      'pageid': pageid,
+      'title': title,
+      'primary': primary,
+      'canTellMore': canTellMore,
+      'isSaved': isSaved,
+    }));
+    final err = setNarrationError;
+    if (err != null) {
+      setNarrationError = null;
+      throw err;
+    }
+  }
+
+  @override
+  Future<void> setNarrationSaved({required bool isSaved}) async {
+    sentCalls.add(RecordedCall('setNarrationSaved', {'isSaved': isSaved}));
+    final err = setNarrationSavedError;
+    if (err != null) {
+      setNarrationSavedError = null;
+      throw err;
+    }
+  }
+
+  @override
+  Future<void> clearNarration() async {
+    sentCalls.add(const RecordedCall('clearNarration', <String, dynamic>{}));
+    final err = clearNarrationError;
+    if (err != null) {
+      clearNarrationError = null;
       throw err;
     }
   }

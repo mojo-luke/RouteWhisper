@@ -279,6 +279,71 @@ class UserProfile(Document):
         ]
 
 
+class NarrationInteraction(Document):
+    """Append-only log of how a user engaged with each whispered fact.
+
+    Captures *implicit* taste signal from the buttons the user is
+    already tapping during the drive — no new UI required. Once we
+    have enough volume, Phase 3 will read this back into the ranker
+    so the system learns what each user finds interesting without
+    them having to thumb-vote anything.
+
+    Event types and what they imply:
+      - `played`        — narration fired (baseline; user heard it)
+      - `replayed`      — Replay tapped (strong positive)
+      - `tell_me_more`  — Tell me more tapped (strong positive)
+      - `dismissed`     — Dismiss tapped before audio ended (negative)
+
+    `follow_up_index` is only set for `tell_me_more` events to know
+    which follow-up the user advanced to. `trip_id` ties the event
+    back to the trip that surfaced the fact, useful for trip-level
+    Discoveries timelines.
+
+    Stateful "is this fact currently saved" lives in SavedFact, not
+    here — different shape (append-only vs upsertable set), different
+    purpose.
+    """
+    user_id: str
+    wikipedia_pageid: int
+    event_type: str  # played | replayed | tell_me_more | dismissed
+    follow_up_index: Optional[int] = None
+    trip_id: Optional[str] = None
+    fired_at: datetime = datetime.utcnow()
+
+    class Settings:
+        name = "narration_interactions"
+        indexes = [
+            [("user_id", 1), ("fired_at", -1)],  # per-user timeline
+            [("user_id", 1), ("wikipedia_pageid", 1)],  # per-fact lookup
+            [("user_id", 1), ("event_type", 1)],  # bucket by reaction
+        ]
+
+
+class SavedFact(Document):
+    """User-curated list of facts to revisit. Different shape from
+    NarrationInteraction because Save is *stateful* — the question
+    "is this fact currently saved?" needs a single source of truth,
+    not a derivation from an event log with toggles.
+
+    `article_title` and `article_url` are denormalized at save-time so
+    the user's Saved-list screen can render without re-fetching
+    POIContent. The pageid is still the canonical identifier.
+    """
+    user_id: str
+    wikipedia_pageid: int
+    article_title: str
+    article_url: str
+    saved_at: datetime = datetime.utcnow()
+    trip_id: Optional[str] = None
+
+    class Settings:
+        name = "saved_facts"
+        indexes = [
+            [("user_id", 1), ("saved_at", -1)],  # most-recent first
+            [("user_id", 1), ("wikipedia_pageid", 1)],  # uniqueness check
+        ]
+
+
 class Trip(Document):
     """A user-planned road trip. See docs/trip-planning-brief.md.
 
@@ -380,6 +445,8 @@ async def init_mongodb():
             WaypointStopHistoryDoc,
             UserProfile,
             Trip,
+            NarrationInteraction,
+            SavedFact,
         ],
     )
 

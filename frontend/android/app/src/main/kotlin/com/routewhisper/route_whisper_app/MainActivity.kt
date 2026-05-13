@@ -181,6 +181,9 @@ class MainActivity : FlutterActivity() {
                 "addNarrationMarker" -> handleAddNarrationMarker(call, result)
                 "setActiveNarrationMarker" -> handleSetActiveNarrationMarker(call, result)
                 "clearNarrationMarkers" -> handleClearNarrationMarkers(result)
+                "setNarration" -> handleSetNarration(call, result)
+                "setNarrationSaved" -> handleSetNarrationSaved(call, result)
+                "clearNarration" -> handleClearNarration(result)
                 else -> result.notImplemented()
             }
         }
@@ -427,6 +430,49 @@ class MainActivity : FlutterActivity() {
 
     private fun handleClearNarrationMarkers(result: MethodChannel.Result) {
         MapActivity.currentInstance?.clearNarrationMarkers()
+        result.success(null)
+    }
+
+    /**
+     * Show or replace the in-nav narration banner. Mirrors the
+     * dashboard NarrationCard so the user can react during active
+     * driving without leaving MapActivity. Silent no-op when
+     * MapActivity isn't currently in the foreground — the audio
+     * still plays, just no visible card.
+     */
+    private fun handleSetNarration(call: MethodCall, result: MethodChannel.Result) {
+        val pageid = call.argument<Int>("pageid")
+        val title = call.argument<String>("title")
+        val primary = call.argument<String>("primary")
+        val canTellMore = call.argument<Boolean>("canTellMore")
+        val isSaved = call.argument<Boolean>("isSaved")
+        if (pageid == null || title == null || primary == null ||
+            canTellMore == null || isSaved == null) {
+            result.error("INVALID_ARGS", "Missing narration fields", null)
+            return
+        }
+        MapActivity.currentInstance?.setNarrationUi(
+            pageid = pageid,
+            title = title,
+            primary = primary,
+            canTellMore = canTellMore,
+            isSaved = isSaved,
+        )
+        result.success(null)
+    }
+
+    private fun handleSetNarrationSaved(call: MethodCall, result: MethodChannel.Result) {
+        val isSaved = call.argument<Boolean>("isSaved")
+        if (isSaved == null) {
+            result.error("INVALID_ARGS", "Missing isSaved", null)
+            return
+        }
+        MapActivity.currentInstance?.setNarrationSavedUi(isSaved)
+        result.success(null)
+    }
+
+    private fun handleClearNarration(result: MethodChannel.Result) {
+        MapActivity.currentInstance?.clearNarrationUi()
         result.success(null)
     }
 

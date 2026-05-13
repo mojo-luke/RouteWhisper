@@ -58,14 +58,28 @@ def test_stride_sample_single_point():
     assert _stride_sample([pt], stride_miles=5.0) == [pt]
 
 
-def test_min_distance_to_route_is_min_vertex_distance():
+def test_min_distance_to_route_uses_line_distance_not_vertex_distance():
     route = [(37.0, -122.0), (38.0, -122.0)]
-    # A point on the line between the two vertices — vertex-min
-    # approximation should still produce the smaller of the two
-    # haversine distances, which for the midpoint is ~34.5mi.
+    # The midpoint of the segment IS on the line, so a proper
+    # line-distance returns ~0. The old vertex-only approximation
+    # would have returned the haversine to one of the endpoints
+    # (~34.5mi), which badly underestimates the distance from
+    # points genuinely far from the route while overestimating for
+    # points on the line. This test pins the new correct semantics.
     midpoint = (37.5, -122.0)
     d = _min_distance_to_route(midpoint, route)
-    assert 30 < d < 40
+    assert d < 0.1  # on the line, give or take rounding
+
+
+def test_min_distance_to_route_off_line_returns_real_perpendicular():
+    # A point 0.01 degrees east of the midpoint is roughly 0.55mi
+    # off the line (at 37.5°N, 0.01° longitude ≈ 0.55mi). Old
+    # vertex-only would have reported ~34.5mi; new line-distance
+    # gives the actual perpendicular distance.
+    route = [(37.0, -122.0), (38.0, -122.0)]
+    off_line = (37.5, -121.99)
+    d = _min_distance_to_route(off_line, route)
+    assert 0.3 < d < 0.8
 
 
 # ---- HTTP-stubbed geosearch + extract -------------------------

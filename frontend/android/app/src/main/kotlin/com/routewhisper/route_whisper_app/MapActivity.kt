@@ -3,6 +3,7 @@ package com.routewhisper.route_whisper_app
 import android.os.Bundle
 import android.util.Log
 import android.view.View
+import android.widget.Button
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.snackbar.Snackbar
@@ -158,6 +159,22 @@ class MapActivity : AppCompatActivity() {
     // against stale taps after the surface was replaced or cleared.
     private var currentRecommendationPoiId: String? = null
 
+    // In-nav narration banner (Phase 2 surface during active driving).
+    // Mirrors the dashboard NarrationCard so the user can see what's
+    // being narrated, save it, advance follow-ups, or dismiss without
+    // backing out of MapActivity.
+    private lateinit var narrationCardView: View
+    private lateinit var narrationTitleText: TextView
+    private lateinit var narrationPrimaryText: TextView
+    private lateinit var narrationReplayButton: View
+    private lateinit var narrationMoreButton: Button
+    private lateinit var narrationSaveButton: android.widget.ImageButton
+    private lateinit var narrationDismissButton: View
+    // Pageid of the currently surfaced narration — stale-tap guard
+    // and the key for the save/dismiss callbacks back to Flutter.
+    private var currentNarrationPageid: Int? = null
+    private var currentNarrationIsSaved: Boolean = false
+
     // Flutter overlay for POI discovery
     private lateinit var flutterContainer: FrameLayout
     private var flutterView: FlutterView? = null
@@ -250,6 +267,46 @@ class MapActivity : AppCompatActivity() {
                 mapOf("poiId" to poiId),
             )
             hideRecommendationBanner()
+        }
+
+        // Narration banner (Phase 2). Mirrors the dashboard
+        // NarrationCard's controls during active driving so the
+        // user can react without leaving MapActivity.
+        narrationCardView = findViewById(R.id.narrationCard)
+        narrationTitleText = findViewById(R.id.narrationTitle)
+        narrationPrimaryText = findViewById(R.id.narrationPrimary)
+        narrationReplayButton = findViewById(R.id.narrationReplayButton)
+        narrationMoreButton = findViewById(R.id.narrationMoreButton)
+        narrationSaveButton = findViewById(R.id.narrationSaveButton)
+        narrationDismissButton = findViewById(R.id.narrationDismissButton)
+        narrationReplayButton.setOnClickListener {
+            val pageid = currentNarrationPageid ?: return@setOnClickListener
+            MainActivity.methodChannelInstance?.invokeMethod(
+                "narrationReplay", mapOf("pageid" to pageid),
+            )
+        }
+        narrationMoreButton.setOnClickListener {
+            val pageid = currentNarrationPageid ?: return@setOnClickListener
+            MainActivity.methodChannelInstance?.invokeMethod(
+                "narrationTellMore", mapOf("pageid" to pageid),
+            )
+        }
+        narrationSaveButton.setOnClickListener {
+            val pageid = currentNarrationPageid ?: return@setOnClickListener
+            MainActivity.methodChannelInstance?.invokeMethod(
+                "narrationSave", mapOf("pageid" to pageid),
+            )
+            // Optimistic UI flip; Flutter is the source of truth
+            // and will push back the canonical state via
+            // setNarrationSavedUi after the round-trip completes.
+            applyNarrationSavedUi(!currentNarrationIsSaved)
+        }
+        narrationDismissButton.setOnClickListener {
+            val pageid = currentNarrationPageid ?: return@setOnClickListener
+            MainActivity.methodChannelInstance?.invokeMethod(
+                "narrationDismiss", mapOf("pageid" to pageid),
+            )
+            hideNarrationBanner()
         }
 
         // Set up recenter button click listener
@@ -1272,6 +1329,56 @@ class MapActivity : AppCompatActivity() {
     private fun hideRecommendationBanner() {
         currentRecommendationPoiId = null
         recommendationCard.visibility = View.GONE
+    }
+
+    /**
+     * Show / replace the in-nav narration banner. Mirrors the
+     * dashboard NarrationCard so the user has a controllable
+     * surface during active driving. Recommendation banner takes
+     * priority — if both want to be visible we'd want to coordinate,
+     * but in practice they fire at very different cadences (recs at
+     * minute scales, narrations every 30s+).
+     */
+    fun setNarrationUi(
+        pageid: Int,
+        title: String,
+        primary: String,
+        canTellMore: Boolean,
+        isSaved: Boolean,
+    ) {
+        runOnUiThread {
+            currentNarrationPageid = pageid
+            narrationTitleText.text = title
+            narrationPrimaryText.text = primary
+            narrationMoreButton.isEnabled = canTellMore
+            narrationMoreButton.alpha = if (canTellMore) 1f else 0.4f
+            applyNarrationSavedUi(isSaved)
+            narrationCardView.visibility = View.VISIBLE
+        }
+    }
+
+    /** Update only the save-state of the active banner (no full
+     *  rebuild). Called when toggleSave finishes on Flutter side. */
+    fun setNarrationSavedUi(isSaved: Boolean) {
+        runOnUiThread { applyNarrationSavedUi(isSaved) }
+    }
+
+    fun clearNarrationUi() {
+        runOnUiThread { hideNarrationBanner() }
+    }
+
+    private fun applyNarrationSavedUi(isSaved: Boolean) {
+        currentNarrationIsSaved = isSaved
+        narrationSaveButton.setImageResource(
+            if (isSaved) android.R.drawable.btn_star_big_on
+            else android.R.drawable.btn_star_big_off
+        )
+    }
+
+    private fun hideNarrationBanner() {
+        currentNarrationPageid = null
+        currentNarrationIsSaved = false
+        narrationCardView.visibility = View.GONE
     }
 
     /**

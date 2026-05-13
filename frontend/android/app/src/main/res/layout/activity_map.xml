@@ -252,6 +252,118 @@
 
     </androidx.cardview.widget.CardView>
 
+    <!-- Narration banner - bottom-anchored card showing the current
+         whisper with Replay / Tell me more / Save / Dismiss controls.
+         Lives alongside the recommendation banner; only one of the two
+         is visible at a time (recommendations preempt narration since
+         they're action-oriented). Set by Flutter via method channel
+         when NarrationService fires a fact. -->
+    <androidx.cardview.widget.CardView
+        android:id="@+id/narrationCard"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_above="@id/tripProgressView"
+        android:layout_marginHorizontal="16dp"
+        android:layout_marginBottom="12dp"
+        android:visibility="gone"
+        app:cardElevation="8dp"
+        app:cardCornerRadius="16dp"
+        app:cardBackgroundColor="#1F2A3A">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="14dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:id="@+id/narrationIcon"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textSize="20sp"
+                    android:text="🗣️" />
+
+                <TextView
+                    android:id="@+id/narrationTitle"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginStart="10dp"
+                    android:maxLines="1"
+                    android:ellipsize="end"
+                    android:textColor="@android:color/white"
+                    android:textSize="15sp"
+                    android:textStyle="bold"
+                    android:text="Place name" />
+
+                <ImageButton
+                    android:id="@+id/narrationSaveButton"
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:src="@android:drawable/btn_star_big_off"
+                    android:background="?android:attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="Save for later" />
+
+                <ImageButton
+                    android:id="@+id/narrationDismissButton"
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:layout_marginStart="4dp"
+                    android:src="@android:drawable/ic_menu_close_clear_cancel"
+                    android:background="?android:attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="Dismiss" />
+
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/narrationPrimary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:maxLines="4"
+                android:ellipsize="end"
+                android:textColor="#E0FFFFFF"
+                android:textSize="13sp"
+                android:text="Narration text appears here" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/narrationReplayButton"
+                    style="?android:attr/buttonBarButtonStyle"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Replay"
+                    android:textColor="@android:color/white"
+                    android:background="@drawable/recommendation_button_outline" />
+
+                <Button
+                    android:id="@+id/narrationMoreButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="2"
+                    android:layout_marginStart="10dp"
+                    android:text="Tell me more"
+                    android:textColor="@android:color/white"
+                    android:background="@drawable/recommendation_button_filled" />
+
+            </LinearLayout>
+
+        </LinearLayout>
+
+    </androidx.cardview.widget.CardView>
+
     <!-- Flutter overlay container for POI discovery -->
     <FrameLayout
         android:id="@+id/flutterContainer"

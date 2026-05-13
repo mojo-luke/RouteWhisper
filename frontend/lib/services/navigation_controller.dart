@@ -48,6 +48,11 @@ class NavigationController extends ChangeNotifier {
       onSuggestStopRequested: _onSuggestStopRequested,
       onWaypointProgressRequest: _onWaypointProgressRequest,
       onLocationUpdate: _onLocationUpdate,
+      onNarrationReplay: (_) => NavigationService.narration.replay(),
+      onNarrationTellMore: (_) => NavigationService.narration.tellMeMore(),
+      onNarrationSave: (_) => NavigationService.narration.toggleSaveActive(),
+      onNarrationDismiss: (_) =>
+          NavigationService.narration.dismissActive(),
     ));
     // Bind the narration service to the same bridge so its
     // speakNarration calls hit the same native handler.

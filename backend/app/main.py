@@ -37,7 +37,9 @@ from app.utils.polyline import (
 from app.auth import CurrentUser, get_current_user
 from app.database import (
     init_mongodb,
+    NarrationInteraction,
     POIContent,
+    SavedFact,
     Trip,
     UserProfile,
     WaypointStopHistoryDoc,
@@ -983,11 +985,11 @@ def _route_facts_cache_key(polyline: str, interests: list[dict]) -> str:
     # regardless of dict key order.
     h.update(json.dumps(interests, sort_keys=True, default=str).encode()
              if interests else b"[]")
-    # v6: region kind dropped entirely (was 0.5mi-capped). Until we
-    # have polygon data to test "route passes through region", any
-    # cap on a center-coord is fuzzy. Per-pageid POIContent cache
-    # stays valid; only the response envelope needs refresh.
-    return f"route_facts:v6:{h.hexdigest()}"
+    # v7: _min_distance_to_route now uses proper line-distance
+    # (shapely) instead of nearest-vertex. Parallel-street landmarks
+    # that previously slipped past the 160m cap now get filtered
+    # correctly. Per-pageid POIContent cache stays valid.
+    return f"route_facts:v7:{h.hexdigest()}"
 
 
 # Bump this when the TTS model or voice-direction prompt changes.
@@ -1216,6 +1218,148 @@ async def _serve_audio(pageid: int, kind: str, *, index: int = -1):
         # never changes once synthesized.
         headers={"Cache-Control": "public, max-age=86400"},
     )
+
+
+# =============================================================================
+# Phase 2 — Talkback
+#
+# Implicit interaction events (`/event`) and stateful save toggles
+# (`/save`). Implicit signals power the ranker in Phase 3; saves
+# power the user-facing Discoveries list. See Phase 2 design notes
+# in the commit messages and ~/.claude/plans/.
+# =============================================================================
+
+
+_ALLOWED_INTERACTION_EVENTS = {
+    "played",        # narration fired (baseline)
+    "replayed",      # Replay tapped (strong positive)
+    "tell_me_more",  # Tell me more tapped (strong positive)
+    "dismissed",     # Dismiss tapped before audio ended (negative)
+}
+
+
+class NarrationEventPayload(BaseModel):
+    """Body for POST /narration/{pageid}/event. `follow_up_index` is
+    only meaningful when event_type == 'tell_me_more'."""
+    event_type: str
+    follow_up_index: Optional[int] = None
+    trip_id: Optional[str] = None
+
+
+@app.post("/api/v1/narration/{pageid}/event", status_code=202)
+async def record_narration_event(
+    pageid: int,
+    body: NarrationEventPayload,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Append one implicit-interaction event. Fire-and-forget on the
+    device side — we accept-and-store, no rich response.
+
+    Validates `event_type` strictly so a typo doesn't pollute the
+    event log; unknown types 400 and the client learns to fix it.
+    """
+    if body.event_type not in _ALLOWED_INTERACTION_EVENTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"unknown event_type={body.event_type!r}; "
+                   f"allowed={sorted(_ALLOWED_INTERACTION_EVENTS)}",
+        )
+    interaction = NarrationInteraction(
+        user_id=user.id,
+        wikipedia_pageid=pageid,
+        event_type=body.event_type,
+        follow_up_index=body.follow_up_index,
+        trip_id=body.trip_id,
+        fired_at=datetime.utcnow(),
+    )
+    await interaction.insert()
+    return {"status": "recorded"}
+
+
+class SaveFactPayload(BaseModel):
+    """Body for POST /narration/{pageid}/save. We need the title
+    and url at save-time so the Saved-list screen can render
+    without re-fetching POIContent for every entry."""
+    article_title: str
+    article_url: str
+    trip_id: Optional[str] = None
+
+
+@app.post("/api/v1/narration/{pageid}/save")
+async def save_fact(
+    pageid: int,
+    body: SaveFactPayload,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Upsert this fact into the user's saved list. Idempotent:
+    saving the same fact twice keeps the older saved_at timestamp
+    (so the "most recently saved" order remains useful)."""
+    existing = await SavedFact.find_one(
+        SavedFact.user_id == user.id,
+        SavedFact.wikipedia_pageid == pageid,
+    )
+    if existing is not None:
+        return {"status": "already_saved"}
+    saved = SavedFact(
+        user_id=user.id,
+        wikipedia_pageid=pageid,
+        article_title=body.article_title,
+        article_url=body.article_url,
+        trip_id=body.trip_id,
+        saved_at=datetime.utcnow(),
+    )
+    await saved.insert()
+    return {"status": "saved"}
+
+
+@app.delete("/api/v1/narration/{pageid}/save")
+async def unsave_fact(
+    pageid: int,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Remove a fact from the user's saved list. Idempotent —
+    no error if it wasn't saved to begin with, just returns
+    `not_saved` so the client can resync."""
+    existing = await SavedFact.find_one(
+        SavedFact.user_id == user.id,
+        SavedFact.wikipedia_pageid == pageid,
+    )
+    if existing is None:
+        return {"status": "not_saved"}
+    await existing.delete()
+    return {"status": "removed"}
+
+
+class SavedFactSummary(BaseModel):
+    wikipedia_pageid: int
+    article_title: str
+    article_url: str
+    saved_at: str
+    trip_id: Optional[str] = None
+
+
+@app.get("/api/v1/narration/saved")
+async def list_saved_facts(user: CurrentUser = Depends(get_current_user)):
+    """Return the user's saved facts, most recently saved first.
+    Used to hydrate the NarrationCard's saved-state and to populate
+    a future Saved-list screen."""
+    docs = (
+        await SavedFact.find(SavedFact.user_id == user.id)
+        .sort(-SavedFact.saved_at)
+        .to_list()
+    )
+    return {
+        "saved": [
+            SavedFactSummary(
+                wikipedia_pageid=d.wikipedia_pageid,
+                article_title=d.article_title,
+                article_url=d.article_url,
+                saved_at=d.saved_at.isoformat(),
+                trip_id=d.trip_id,
+            ).model_dump()
+            for d in docs
+        ]
+    }
 
 
 class GeocodeCandidate(BaseModel):

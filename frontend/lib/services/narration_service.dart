@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 
 import '../models/route_fact.dart';
+import 'narration_feedback_service.dart';
 import 'navigation_host_bridge.dart';
 import 'route_facts_service.dart';
 
@@ -76,6 +77,17 @@ class NarrationService extends ChangeNotifier {
   bool _isLoading = false;
   bool get isLoading => _isLoading;
 
+  // Pageids the user has previously saved. Hydrated at startTrip
+  // and mutated optimistically by `toggleSave`. The NarrationCard
+  // reads `isSaved(pageid)` to render its star icon state.
+  final Set<int> _savedPageids = <int>{};
+  bool isSaved(int pageid) => _savedPageids.contains(pageid);
+
+  // Trip identifier carried into feedback events so we can tie
+  // them back to specific trips later (Discoveries timeline). null
+  // for ad-hoc drives that aren't backed by a saved Trip record.
+  String? _currentTripId;
+
   // The most recent fact we narrated. The narration card reads this
   // and shows the title + primary text + buttons.
   _ActiveNarration? _active;
@@ -98,18 +110,37 @@ class NarrationService extends ChangeNotifier {
   /// Kick off a trip's narration by fetching facts for the encoded
   /// polyline. Idempotent for the same polyline; calling again with
   /// a different polyline replaces the queue.
-  Future<void> startTrip(String polyline) async {
+  ///
+  /// Also hydrates the saved-pageids set in parallel so the
+  /// NarrationCard can render correct save state from the first
+  /// whisper without flicker.
+  Future<void> startTrip(String polyline, {String? tripId}) async {
     debugPrint('🗣️ Narration: loading facts for trip...');
     _isLoading = true;
     _queue = const [];
     _active = null;
     _followUpIndex = 0;
     _lastSpokeAt = null;
+    _currentTripId = tripId;
     notifyListeners();
-    final facts = await _fetcher(polyline);
+
+    // Fetch facts + saved pageids in parallel. Saves don't block
+    // narration: if listSaved fails the card just shows un-starred
+    // hearts and the user can still save.
+    final results = await Future.wait([
+      _fetcher(polyline),
+      NarrationFeedbackService.listSaved(),
+    ]);
+    final facts = results[0] as List<RouteFact>;
+    final saved = results[1] as List<SavedFactSummary>;
+
     _queue = facts;
+    _savedPageids
+      ..clear()
+      ..addAll(saved.map((s) => s.wikipediaPageid));
     _isLoading = false;
-    debugPrint('🗣️ Narration: loaded ${facts.length} facts');
+    debugPrint(
+        '🗣️ Narration: loaded ${facts.length} facts, ${saved.length} saved');
     notifyListeners();
   }
 
@@ -125,6 +156,7 @@ class NarrationService extends ChangeNotifier {
     _followUpIndex = 0;
     _lastSpokeAt = null;
     _isLoading = false;
+    _bridge?.clearNarration();
     _bridge?.clearNarrationMarkers();
     notifyListeners();
   }
@@ -221,7 +253,8 @@ class NarrationService extends ChangeNotifier {
   /// promote it to `current` so the UI shows the card, and reset
   /// follow-up index. Also drops a persistent map marker so the user
   /// has a visual anchor for what's being discussed, and promotes
-  /// it to "active" for the pulsing animation.
+  /// it to "active" for the pulsing animation. Records a `played`
+  /// interaction event for Phase 3 personalization.
   void _fire(RouteFact fact, DateTime now) {
     _active = _ActiveNarration(fact: fact, firedAt: now);
     _followUpIndex = 0;
@@ -229,7 +262,28 @@ class NarrationService extends ChangeNotifier {
     debugPrint('🗣️ Whisper: "${fact.articleTitle}" — ${fact.primary}');
     _speak(fact.primary, fact.primaryAudioUrl);
     _dropMarker(fact);
+    _pushNarrationBanner(fact);
+    NarrationFeedbackService.recordEvent(
+      pageid: fact.wikipediaPageid,
+      eventType: NarrationEvent.played,
+      tripId: _currentTripId,
+    );
     notifyListeners();
+  }
+
+  /// Push the active narration into the native banner inside
+  /// MapActivity so the user has a controllable surface during
+  /// active driving (the Flutter NarrationCard only renders on the
+  /// dashboard). Fire-and-forget — banner is a UX nicety, not
+  /// load-bearing.
+  void _pushNarrationBanner(RouteFact fact) {
+    _bridge?.setNarration(
+      pageid: fact.wikipediaPageid,
+      title: fact.articleTitle,
+      primary: fact.primary,
+      canTellMore: !fact.isThin && fact.followUps.isNotEmpty,
+      isSaved: _savedPageids.contains(fact.wikipediaPageid),
+    );
   }
 
   /// Add a persistent map marker for [fact] and promote it to the
@@ -250,7 +304,8 @@ class NarrationService extends ChangeNotifier {
   }
 
   /// Re-speak the current narration. No spacing rule applies — this
-  /// is user-initiated.
+  /// is user-initiated. Recorded as a `replayed` event (strong
+  /// positive signal: user wanted to hear it twice).
   void replay() {
     final a = _active;
     if (a == null) return;
@@ -263,10 +318,17 @@ class NarrationService extends ChangeNotifier {
         _audioAt(a.fact.followUpAudioUrls, i),
       );
     }
+    NarrationFeedbackService.recordEvent(
+      pageid: a.fact.wikipediaPageid,
+      eventType: NarrationEvent.replayed,
+      tripId: _currentTripId,
+    );
   }
 
   /// Advance to the next follow-up. Returns false when exhausted
   /// (the card switches to "that's all I've got on this one").
+  /// Recorded as a `tell_me_more` event with the index advanced to
+  /// — that's strong positive signal for the ranker.
   bool tellMeMore() {
     final a = _active;
     if (a == null) return false;
@@ -277,6 +339,12 @@ class NarrationService extends ChangeNotifier {
     final url = _audioAt(a.fact.followUpAudioUrls, i);
     _followUpIndex += 1;
     _speak(next, url);
+    NarrationFeedbackService.recordEvent(
+      pageid: a.fact.wikipediaPageid,
+      eventType: NarrationEvent.tellMeMore,
+      followUpIndex: i,
+      tripId: _currentTripId,
+    );
     notifyListeners();
     return true;
   }
@@ -309,11 +377,60 @@ class NarrationService extends ChangeNotifier {
 
   /// Dismiss the active card without saving. Doesn't reset
   /// `_lastSpokeAt` — we don't want the next narration to fire
-  /// immediately after a dismiss.
+  /// immediately after a dismiss. Recorded as a `dismissed` event
+  /// (negative signal: user actively rejected this whisper).
   void dismissActive() {
+    final a = _active;
+    if (a != null) {
+      NarrationFeedbackService.recordEvent(
+        pageid: a.fact.wikipediaPageid,
+        eventType: NarrationEvent.dismissed,
+        tripId: _currentTripId,
+      );
+    }
     _active = null;
     _followUpIndex = 0;
+    _bridge?.clearNarration();
     notifyListeners();
+  }
+
+  /// Toggle the save state of the currently-active fact. Optimistic:
+  /// the UI flips immediately, the backend call happens in the
+  /// background. On network failure we revert and notify so the
+  /// star icon stays honest.
+  Future<void> toggleSaveActive() async {
+    final a = _active;
+    if (a == null) return;
+    final pageid = a.fact.wikipediaPageid;
+    final wasSaved = _savedPageids.contains(pageid);
+    if (wasSaved) {
+      _savedPageids.remove(pageid);
+    } else {
+      _savedPageids.add(pageid);
+    }
+    notifyListeners();
+
+    // Reflect optimistic state on native banner immediately too.
+    _bridge?.setNarrationSaved(isSaved: !wasSaved);
+
+    final success = wasSaved
+        ? await NarrationFeedbackService.unsaveFact(pageid: pageid)
+        : await NarrationFeedbackService.saveFact(
+            pageid: pageid,
+            articleTitle: a.fact.articleTitle,
+            articleUrl: a.fact.articleUrl,
+            tripId: _currentTripId,
+          );
+    if (!success) {
+      // Revert the optimistic flip — backend rejected the change.
+      if (wasSaved) {
+        _savedPageids.add(pageid);
+      } else {
+        _savedPageids.remove(pageid);
+      }
+      _bridge?.setNarrationSaved(isSaved: wasSaved);
+      notifyListeners();
+    }
   }
 }
 

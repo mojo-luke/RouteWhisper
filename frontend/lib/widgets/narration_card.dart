@@ -123,6 +123,25 @@ class _NarrationCardState extends State<NarrationCard> {
                   label: Text(_tellMeMoreLabel(active)),
                   onPressed: _service.canTellMore ? _service.tellMeMore : null,
                 ),
+                const Spacer(),
+                // Star toggle: explicit "remember this for later"
+                // signal. State is hydrated from the backend at trip
+                // start so previously-saved facts already show
+                // filled on the first whisper.
+                IconButton(
+                  tooltip: _service.isSaved(active.fact.wikipediaPageid)
+                      ? 'Saved'
+                      : 'Save for later',
+                  icon: Icon(
+                    _service.isSaved(active.fact.wikipediaPageid)
+                        ? Icons.star
+                        : Icons.star_border,
+                    color: _service.isSaved(active.fact.wikipediaPageid)
+                        ? Colors.amber
+                        : null,
+                  ),
+                  onPressed: _service.toggleSaveActive,
+                ),
               ],
             ),
             if (!_service.canTellMore && (active.fact.isThin || _outOfFollowUps(active)))

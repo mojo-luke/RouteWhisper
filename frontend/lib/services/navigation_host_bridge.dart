@@ -119,6 +119,27 @@ abstract class NavigationHostBridge {
   /// **Native effect:** MediaPlayer.setDataSource(url) + start().
   Future<void> playNarrationAudio({required String url});
 
+  /// Show or replace the in-nav narration banner. Mirrors the
+  /// dashboard NarrationCard so the user can interact (Replay /
+  /// Tell me more / Save / Dismiss) without backing out of MapActivity.
+  /// Pass `pageid` so native can echo the right id back on
+  /// inbound events.
+  Future<void> setNarration({
+    required int pageid,
+    required String title,
+    required String primary,
+    required bool canTellMore,
+    required bool isSaved,
+  });
+
+  /// Update the save-state on the active narration banner without a
+  /// full rebuild. Called when toggleSave finishes its backend
+  /// round-trip on the Flutter side.
+  Future<void> setNarrationSaved({required bool isSaved});
+
+  /// Hide the in-nav narration banner.
+  Future<void> clearNarration();
+
   /// Drop a narration marker on the live map for the place currently
   /// being whispered about. Markers persist for the whole trip so the
   /// user can see a trail of everything the app has surfaced, with
@@ -241,6 +262,22 @@ class NavigationHostHandlers {
     required double durationSeconds,
   }) onWaypointProgressRequest;
 
+  /// Native banner Replay tapped — NarrationService should re-play
+  /// the active narration (same as the dashboard's Replay).
+  final void Function(int pageid) onNarrationReplay;
+
+  /// Native banner "Tell me more" tapped — NarrationService should
+  /// advance to the next follow-up.
+  final void Function(int pageid) onNarrationTellMore;
+
+  /// Native banner save-star tapped — NarrationService should toggle
+  /// save state and push the result back via `setNarrationSaved`.
+  final void Function(int pageid) onNarrationSave;
+
+  /// Native banner Dismiss tapped — NarrationService should dismiss
+  /// the active card.
+  final void Function(int pageid) onNarrationDismiss;
+
   /// Native pushes the current vehicle location at the cadence Mapbox's
   /// location observer fires (typically every ~1s while driving). Used
   /// by NarrationService to trigger whispers on proximity to facts.
@@ -271,6 +308,10 @@ class NavigationHostHandlers {
     required this.onSuggestStopRequested,
     required this.onWaypointProgressRequest,
     required this.onLocationUpdate,
+    required this.onNarrationReplay,
+    required this.onNarrationTellMore,
+    required this.onNarrationSave,
+    required this.onNarrationDismiss,
   });
 }
 
@@ -438,6 +479,33 @@ class MethodChannelNavigationHostBridge implements NavigationHostBridge {
   }
 
   @override
+  Future<void> setNarration({
+    required int pageid,
+    required String title,
+    required String primary,
+    required bool canTellMore,
+    required bool isSaved,
+  }) async {
+    await _channel.invokeMethod('setNarration', {
+      'pageid': pageid,
+      'title': title,
+      'primary': primary,
+      'canTellMore': canTellMore,
+      'isSaved': isSaved,
+    });
+  }
+
+  @override
+  Future<void> setNarrationSaved({required bool isSaved}) async {
+    await _channel.invokeMethod('setNarrationSaved', {'isSaved': isSaved});
+  }
+
+  @override
+  Future<void> clearNarration() async {
+    await _channel.invokeMethod('clearNarration');
+  }
+
+  @override
   void setHandlers(NavigationHostHandlers handlers) {
     _handlers = handlers;
   }
@@ -512,6 +580,22 @@ class MethodChannelNavigationHostBridge implements NavigationHostBridge {
           distanceMeters: (data['distanceMeters'] as num).toDouble(),
           durationSeconds: (data['durationSeconds'] as num).toDouble(),
         );
+
+      case 'narrationReplay':
+        h.onNarrationReplay((call.arguments as Map)['pageid'] as int);
+        return null;
+
+      case 'narrationTellMore':
+        h.onNarrationTellMore((call.arguments as Map)['pageid'] as int);
+        return null;
+
+      case 'narrationSave':
+        h.onNarrationSave((call.arguments as Map)['pageid'] as int);
+        return null;
+
+      case 'narrationDismiss':
+        h.onNarrationDismiss((call.arguments as Map)['pageid'] as int);
+        return null;
 
       case 'locationUpdate':
         final data = Map<String, dynamic>.from(call.arguments as Map);
