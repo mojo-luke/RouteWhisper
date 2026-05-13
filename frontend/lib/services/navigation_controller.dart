@@ -161,11 +161,13 @@ class NavigationController extends ChangeNotifier {
     required double latitude,
     required double longitude,
     required double speedMph,
+    required double distanceAlongRouteMeters,
   }) {
     NavigationService.narration.onLocationUpdate(
       latitude: latitude,
       longitude: longitude,
       speedMph: speedMph,
+      distanceAlongRouteMeters: distanceAlongRouteMeters,
     );
   }
 

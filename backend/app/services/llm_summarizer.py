@@ -23,7 +23,7 @@ import logging
 import os
 from typing import Optional
 
-from anthropic import Anthropic, AnthropicError
+from anthropic import Anthropic, AnthropicError, AsyncAnthropic
 from pydantic import BaseModel, Field, ValidationError
 
 logger = logging.getLogger(__name__)
@@ -50,6 +50,26 @@ _SYSTEM_PROMPT = (
     "(listener doesn't know what you mean), 'This place was a Gold "
     "Rush boomtown...' (which place?). The place's name comes first, "
     "every time.\n\n"
+    "ALSO REQUIRED: classify the article into one `feature_kind` "
+    "from this exact set:\n"
+    "  - \"landmark\": a single visible thing at a specific point "
+    "(building, monument, ship, tower, statue, single restaurant). "
+    "Off-route distance matters — listener has to be near it to see it.\n"
+    "  - \"city\" or \"town\": a settlement. The article's coord is "
+    "a center reference; the city extends outward, so the listener "
+    "may be inside it even if the coord is a few miles away.\n"
+    "  - \"river\", \"road\", \"coast\": a linear feature. Coordinate "
+    "is arbitrary along its length; off-route distance is meaningless.\n"
+    "  - \"region\": a county, valley, district, neighborhood, park, "
+    "or any areal feature. Listener is likely inside it; coord is a "
+    "reference point.\n"
+    "  - \"event_only\": the article is about something that "
+    "*happened* nearby but no physical landmark exists at the coord "
+    "(a battle field that's now an empty lot, a historic meeting in "
+    "a building that's gone, etc.). These are interesting but the "
+    "passenger has nothing to see — we won't narrate them.\n"
+    "When uncertain, default to \"landmark\" — strictest filter, "
+    "least likely to play in confusing contexts.\n\n"
     "Return JSON with this shape:\n"
     "{\n"
     "  \"primary\": <35-45 word string opening with the location's "
@@ -60,7 +80,9 @@ _SYSTEM_PROMPT = (
     "knows where you are>,\n"
     "  \"is_thin\": <true if the article genuinely doesn't support "
     "more than the primary; false if you held back follow-ups "
-    "because of word budget>\n"
+    "because of word budget>,\n"
+    "  \"feature_kind\": <one of: landmark, city, town, river, road, "
+    "coast, region, event_only>\n"
     "}\n"
     "Output ONLY the JSON object — no preamble, no markdown fences."
 )
@@ -72,28 +94,55 @@ _SYSTEM_PROMPT = (
 _MAX_EXTRACT_CHARS = 4000
 
 
+# Allowed feature_kind values. Anything outside this set falls back
+# to "landmark" — the strictest filter, used as the safe default.
+ALLOWED_FEATURE_KINDS = {
+    "landmark",
+    "city",
+    "town",
+    "river",
+    "road",
+    "coast",
+    "region",
+    "event_only",
+}
+
+
 class SummaryBundle(BaseModel):
     """The structured contract between the LLM and everything
     downstream. `primary` is the whisper text; `follow_ups` feed the
-    'tell me more' button; `is_thin` lets the UI be honest.
+    'tell me more' button; `is_thin` lets the UI be honest;
+    `feature_kind` lets the ranker filter by article type (a city
+    extends past its center coord; a landmark doesn't).
     """
     primary: str
     follow_ups: list[str] = Field(default_factory=list)
     is_thin: bool = False
+    feature_kind: str = "landmark"
 
 
 class LLMSummarizer:
     """Thin wrapper around the Anthropic client.
 
-    The Anthropic client is injectable so tests can drive synthetic
-    responses without network. Production callers should pass nothing
-    and let it pick up `ANTHROPIC_API_KEY` from the env.
+    Production callers should pass nothing and let it pick up
+    `ANTHROPIC_API_KEY` from the env. Tests can pass a sync client
+    via `client=` (for `summarize_article`) or an async one via
+    `async_client=` (for `summarize_article_async`).
+
+    Two API surfaces: the sync `summarize_article` (used by tests)
+    and an async `summarize_article_async` (used by fact_prep so
+    the event loop can actually parallelize at our concurrency
+    semaphore's width — `asyncio.to_thread` would bottleneck on the
+    default 8-wide thread pool).
     """
 
-    def __init__(self, client: Optional[Anthropic] = None):
-        # Lazy: tests usually pass a mock; prod constructs the
-        # real client off the env var.
+    def __init__(
+        self,
+        client: Optional[Anthropic] = None,
+        async_client: Optional[AsyncAnthropic] = None,
+    ):
         self._client = client
+        self._async_client = async_client
 
     @property
     def client(self) -> Anthropic:
@@ -101,11 +150,16 @@ class LLMSummarizer:
             self._client = Anthropic()
         return self._client
 
+    @property
+    def async_client(self) -> AsyncAnthropic:
+        if self._async_client is None:
+            self._async_client = AsyncAnthropic()
+        return self._async_client
+
     def summarize_article(self, title: str, extract: str) -> SummaryBundle:
-        """One LLM call → SummaryBundle. Synchronous because the
-        Anthropic SDK's sync surface is simpler and we run these
-        in parallel via asyncio.to_thread at the orchestration
-        layer (see `/api/v1/route/facts`).
+        """One LLM call → SummaryBundle. Synchronous variant — used
+        by tests. Production code paths should prefer the async
+        variant to avoid thread-pool bottlenecking.
 
         Always returns a bundle. On any failure (network, parse,
         validation), falls back to a first-paragraph primary with
@@ -131,6 +185,37 @@ class LLMSummarizer:
             logger.warning("LLM summarize failed for '%s': %s", title, e)
             return _fallback(title, extract)
 
+        text = _extract_text(response)
+        return _parse_or_fallback(text, title, extract)
+
+    async def summarize_article_async(
+        self, title: str, extract: str,
+    ) -> SummaryBundle:
+        """Async variant. Same contract as the sync version but uses
+        the async Anthropic client so asyncio can actually run many
+        calls in parallel without thread-pool bottleneck. Fact prep
+        orchestration uses this to keep cold-cache times in the
+        15-30s range instead of minutes.
+        """
+        extract = (extract or "").strip()
+        if not extract:
+            return _fallback(title, "")
+
+        trimmed = extract[:_MAX_EXTRACT_CHARS]
+        user_msg = (
+            f"Wikipedia article: {title}\n\n"
+            f"Article text:\n{trimmed}"
+        )
+        try:
+            response = await self.async_client.messages.create(
+                model=_MODEL,
+                max_tokens=_MAX_TOKENS,
+                system=_SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": user_msg}],
+            )
+        except AnthropicError as e:
+            logger.warning("LLM summarize failed for '%s': %s", title, e)
+            return _fallback(title, extract)
         text = _extract_text(response)
         return _parse_or_fallback(text, title, extract)
 
@@ -166,10 +251,20 @@ def _parse_or_fallback(text: str, title: str, extract: str) -> SummaryBundle:
             return _fallback(title, extract)
 
     try:
-        return SummaryBundle.model_validate(obj)
+        bundle = SummaryBundle.model_validate(obj)
     except ValidationError as e:
         logger.warning("LLM JSON failed schema for '%s': %s", title, e)
         return _fallback(title, extract)
+    # Defensive: if the LLM returns an out-of-set feature_kind
+    # (typo, prompt drift), normalize to the safe default rather
+    # than letting downstream filters fail on it.
+    if bundle.feature_kind not in ALLOWED_FEATURE_KINDS:
+        logger.warning(
+            "LLM returned unknown feature_kind=%r for '%s'; defaulting to landmark",
+            bundle.feature_kind, title,
+        )
+        bundle = bundle.model_copy(update={"feature_kind": "landmark"})
+    return bundle
 
 
 def _strip_fences(text: str) -> str:
@@ -231,4 +326,5 @@ def _fallback(title: str, extract: str) -> SummaryBundle:
         primary=first_sentence,
         follow_ups=[],
         is_thin=True,
+        feature_kind="landmark",  # strictest default — see prompt
     )

@@ -25,7 +25,7 @@ import logging
 import os
 from typing import Optional
 
-from openai import OpenAI, OpenAIError
+from openai import OpenAI, OpenAIError, AsyncOpenAI
 
 logger = logging.getLogger(__name__)
 
@@ -65,21 +65,35 @@ _FORMAT = "mp3"
 
 
 class TtsSynthesizer:
-    """Thin sync wrapper around `client.audio.speech.create`.
+    """Thin wrapper around `client.audio.speech.create`.
 
-    The client is injectable so tests can swap it for a stub. Production
-    constructs the real OpenAI client off `OPENAI_API_KEY` from env.
-    Returns raw mp3 bytes — caller decides where to store them.
+    The sync client is injectable for tests; production constructs
+    both sync and async clients off `OPENAI_API_KEY` from env. The
+    async surface is used by fact_prep so asyncio can parallelize at
+    the orchestration semaphore's width without thread-pool
+    bottleneck. Returns raw mp3 bytes — caller decides where to
+    store them.
     """
 
-    def __init__(self, client: Optional[OpenAI] = None):
+    def __init__(
+        self,
+        client: Optional[OpenAI] = None,
+        async_client: Optional[AsyncOpenAI] = None,
+    ):
         self._client = client
+        self._async_client = async_client
 
     @property
     def client(self) -> OpenAI:
         if self._client is None:
             self._client = OpenAI()
         return self._client
+
+    @property
+    def async_client(self) -> AsyncOpenAI:
+        if self._async_client is None:
+            self._async_client = AsyncOpenAI()
+        return self._async_client
 
     def synthesize(self, text: str) -> Optional[bytes]:
         """Synthesize [text] → mp3 bytes. Returns None on any failure
@@ -135,6 +149,54 @@ class TtsSynthesizer:
         except Exception as e:
             logger.error(
                 "openai tts (%s) unexpected error for %r: %s",
+                model, text[:40], e,
+            )
+            return None
+
+    async def synthesize_async(self, text: str) -> Optional[bytes]:
+        """Async variant of `synthesize`. Same contract — uses async
+        OpenAI client so asyncio can actually parallelize at the
+        orchestration concurrency without thread-pool overhead.
+        """
+        text = (text or "").strip()
+        if not text:
+            return None
+        for attempt_model in (_MODEL, _FALLBACK_MODEL):
+            audio = await self._try_synthesize_async(attempt_model, text)
+            if audio is not None:
+                return audio
+        return None
+
+    async def _try_synthesize_async(
+        self, model: str, text: str,
+    ) -> Optional[bytes]:
+        kwargs = {
+            "model": model,
+            "voice": _VOICE,
+            "input": text,
+            "response_format": _FORMAT,
+        }
+        if model == _MODEL:
+            kwargs["instructions"] = _INSTRUCTIONS
+        try:
+            response = await self.async_client.audio.speech.create(**kwargs)
+            audio = response.content
+            if not audio:
+                logger.warning(
+                    "openai tts async (%s): empty audio for %r",
+                    model, text[:40],
+                )
+                return None
+            return audio
+        except OpenAIError as e:
+            logger.warning(
+                "openai tts async (%s) failed for %r: %s",
+                model, text[:40], e,
+            )
+            return None
+        except Exception as e:
+            logger.error(
+                "openai tts async (%s) unexpected error for %r: %s",
                 model, text[:40], e,
             )
             return None

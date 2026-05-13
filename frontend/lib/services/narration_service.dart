@@ -47,8 +47,21 @@ class NarrationService extends ChangeNotifier {
 
   /// Tuning constants — surfaced as fields so tests can override.
   Duration minSpacing = const Duration(seconds: 30);
-  double proximityMiles = 0.31; // ~500m, matches plan
+  // Fallback for facts without a route-projection (e.g., area
+  // prewarmed facts the user encounters off-trip, or older bundles).
+  double proximityMiles = 0.31; // ~500m
   double maxSpeedMph = 70.0;
+  // Lookahead in seconds of upcoming travel — when a fact's
+  // projected route position is this many seconds ahead of the
+  // user's current position, fire the whisper. 30s gives the
+  // listener time to glance up, spot the place via the map
+  // marker (which pulses while we describe it), and reach it
+  // before the audio finishes.
+  Duration lookaheadDuration = const Duration(seconds: 30);
+  // Floor and ceiling on the lookahead window so it stays sensible
+  // at low and high speeds.
+  double minLookaheadMeters = 200; // ~30s at walking speed
+  double maxLookaheadMeters = 1200; // ~30s at 90mph
 
   // Queue of facts that haven't been narrated yet for the active trip.
   // Sorted by trip order is not strictly necessary — we always pick
@@ -119,10 +132,26 @@ class NarrationService extends ChangeNotifier {
   /// Native pushed a fresh GPS fix. Decide if we should whisper.
   /// Called frequently (~1 Hz during driving) — keep the work
   /// proportional.
+  ///
+  /// Two firing strategies live here:
+  ///
+  ///   1. **Route-projection lookahead (preferred)** — when the fact
+  ///      and the user both have a `distance_along_route_meters`,
+  ///      fire when the fact is approaching: between `0` and
+  ///      `speed-adjusted lookahead` meters ahead of the user along
+  ///      the route. This naturally handles winding roads, varying
+  ///      speeds, and gives the listener time to glance up before
+  ///      we describe a place.
+  ///
+  ///   2. **Haversine proximity fallback** — for facts without a
+  ///      route projection (older bundles, area-prewarm hits the
+  ///      user encounters off-route, etc.), fall back to the simple
+  ///      ~500m radius rule.
   void onLocationUpdate({
     required double latitude,
     required double longitude,
     required double speedMph,
+    double distanceAlongRouteMeters = 0.0,
   }) {
     if (_queue.isEmpty) return;
     if (speedMph > maxSpeedMph) return;
@@ -132,27 +161,60 @@ class NarrationService extends ChangeNotifier {
       return;
     }
 
-    // Find the nearest un-narrated fact. We also trim facts we've
-    // clearly passed (further than 2× proximity *behind* us) but only
-    // when we're not currently within proximity of anything. For
-    // Phase 1 we don't have a "passed" heading-aware check, so we
-    // just keep all facts in the queue and rely on distance-based
-    // re-eligibility — same fact won't fire twice because it gets
-    // removed from the queue on fire.
-    int? bestIndex;
-    double bestDist = double.infinity;
+    final lookaheadM = _lookaheadMeters(speedMph);
+
+    // Score each candidate. Route-projection-eligible facts pick a
+    // "best by lookahead distance"; haversine-only ones pick a "best
+    // by physical proximity." We never fire a fact that's already
+    // behind the user along the route — that's the whole point of
+    // lookahead.
+    int? routeBestIdx;
+    double routeBestAheadM = double.infinity;
+    int? proxBestIdx;
+    double proxBestDistMi = double.infinity;
     for (var i = 0; i < _queue.length; i++) {
       final f = _queue[i];
-      final d = _haversineMiles(latitude, longitude, f.lat, f.lng);
-      if (d < bestDist) {
-        bestDist = d;
-        bestIndex = i;
+      if (f.distanceAlongRouteMeters != null) {
+        final aheadM = f.distanceAlongRouteMeters! - distanceAlongRouteMeters;
+        // Only consider facts that are ahead of us (positive lookahead)
+        // and within the speed-adapted window.
+        if (aheadM >= 0 && aheadM <= lookaheadM && aheadM < routeBestAheadM) {
+          routeBestAheadM = aheadM;
+          routeBestIdx = i;
+        }
+      } else {
+        final d = _haversineMiles(latitude, longitude, f.lat, f.lng);
+        if (d < proxBestDistMi) {
+          proxBestDistMi = d;
+          proxBestIdx = i;
+        }
       }
     }
-    if (bestIndex == null || bestDist > proximityMiles) return;
 
-    final fact = _queue.removeAt(bestIndex);
+    // Route-projection beats haversine when both are eligible — the
+    // lookahead is the better timing signal whenever we have it.
+    int? chosen;
+    if (routeBestIdx != null) {
+      chosen = routeBestIdx;
+    } else if (proxBestIdx != null && proxBestDistMi <= proximityMiles) {
+      chosen = proxBestIdx;
+    }
+    if (chosen == null) return;
+
+    final fact = _queue.removeAt(chosen);
     _fire(fact, now);
+  }
+
+  /// Speed-adapted lookahead window in meters. ~30 seconds of travel
+  /// at any reasonable speed, clamped to a sensible floor/ceiling so
+  /// stationary cars don't refuse to ever fire and racecars don't
+  /// fire from absurdly far away.
+  double _lookaheadMeters(double speedMph) {
+    // 1 mph = 0.44704 m/s; window = speed × seconds.
+    final raw = speedMph * 0.44704 * lookaheadDuration.inSeconds;
+    if (raw < minLookaheadMeters) return minLookaheadMeters;
+    if (raw > maxLookaheadMeters) return maxLookaheadMeters;
+    return raw;
   }
 
   /// Speak the primary line of [fact] now via the native bridge,

@@ -198,8 +198,14 @@ void main() {
           required latitude,
           required longitude,
           required speedMph,
+          required distanceAlongRouteMeters,
         }) =>
-            received['locationUpdate'] = [latitude, longitude, speedMph],
+            received['locationUpdate'] = [
+          latitude,
+          longitude,
+          speedMph,
+          distanceAlongRouteMeters,
+        ],
       ));
 
       // Send each native→Flutter call through the channel and verify
@@ -267,8 +273,9 @@ void main() {
         'latitude': 37.5,
         'longitude': -122.3,
         'speedMph': 45.0,
+        'distanceAlongRouteMeters': 1234.0,
       });
-      expect(received['locationUpdate'], [37.5, -122.3, 45.0]);
+      expect(received['locationUpdate'], [37.5, -122.3, 45.0, 1234.0]);
     });
 
     test('unknown inbound method does not crash and returns null', () async {
@@ -319,6 +326,7 @@ NavigationHostHandlers _throwingHandlers() => NavigationHostHandlers(
         required latitude,
         required longitude,
         required speedMph,
+        required distanceAlongRouteMeters,
       }) =>
           throw StateError('should not fire'),
     );

@@ -21,7 +21,18 @@ class RouteFact {
   // semantics for the corresponding follow-up line.
   final List<String?> followUpAudioUrls;
   final bool isThin;
+  // Classification from the LLM. Drives the marker icon (city vs
+  // landmark vs region) and the narration delivery style later.
+  // Today: just plumbed through for downstream use.
+  final String featureKind;
   final double distanceFromRouteMiles;
+  // Cumulative meters from the start of the active route polyline
+  // to this fact's closest-approach point. Null when the backend
+  // couldn't project (empty polyline, edge case). NarrationService
+  // uses (this - user.distanceAlongRoute) for lookahead timing —
+  // fires the whisper ~30 seconds of travel BEFORE this point so
+  // the user has time to spot the place out the window.
+  final double? distanceAlongRouteMeters;
   final double rankedScore;
 
   const RouteFact({
@@ -35,7 +46,9 @@ class RouteFact {
     this.followUps = const [],
     this.followUpAudioUrls = const [],
     this.isThin = false,
+    this.featureKind = 'landmark',
     required this.distanceFromRouteMiles,
+    this.distanceAlongRouteMeters,
     required this.rankedScore,
   });
 
@@ -53,8 +66,11 @@ class RouteFact {
                 .toList() ??
             const [],
         isThin: (json['is_thin'] as bool?) ?? false,
+        featureKind: json['feature_kind'] as String? ?? 'landmark',
         distanceFromRouteMiles:
             (json['distance_from_route_miles'] as num).toDouble(),
+        distanceAlongRouteMeters:
+            (json['distance_along_route_meters'] as num?)?.toDouble(),
         rankedScore: (json['ranked_score'] as num).toDouble(),
       );
 }

@@ -244,12 +244,17 @@ class NavigationHostHandlers {
   /// Native pushes the current vehicle location at the cadence Mapbox's
   /// location observer fires (typically every ~1s while driving). Used
   /// by NarrationService to trigger whispers on proximity to facts.
-  /// Speed is mph, may be 0 when stopped.
-  /// **Native trigger:** `MapActivity` Mapbox `LocationObserver`.
+  /// Speed is mph, may be 0 when stopped. `distanceAlongRouteMeters`
+  /// is how far along the active route the user has traveled, used by
+  /// NarrationService for lookahead-based whisper timing.
+  /// **Native trigger:** `MapActivity` Mapbox `LocationObserver`
+  /// (location + speed) merged with the latest `RouteProgressObserver`
+  /// cached `distanceTraveled`.
   final void Function({
     required double latitude,
     required double longitude,
     required double speedMph,
+    required double distanceAlongRouteMeters,
   }) onLocationUpdate;
 
   const NavigationHostHandlers({
@@ -514,6 +519,11 @@ class MethodChannelNavigationHostBridge implements NavigationHostBridge {
           latitude: (data['latitude'] as num).toDouble(),
           longitude: (data['longitude'] as num).toDouble(),
           speedMph: (data['speedMph'] as num).toDouble(),
+          // distanceAlongRouteMeters is optional on the wire (added
+          // alongside the lookahead feature) so older native builds
+          // that omit it default to 0 without crashing the dispatch.
+          distanceAlongRouteMeters:
+              (data['distanceAlongRouteMeters'] as num?)?.toDouble() ?? 0.0,
         );
         return null;
     }

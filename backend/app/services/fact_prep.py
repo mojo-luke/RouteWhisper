@@ -59,6 +59,25 @@ _INNER_CONCURRENCY = 12
 # bound the cap for trip prep, which uses fact_ranker's own DEFAULT_TOP_N.
 _AREA_TOP_N = 100
 
+# Per-kind off-route filtering applied AFTER LLM classification.
+# Landmark coordinates point at one visible thing — too far off route
+# and there's nothing to see. Cities/regions extend past their center
+# coord, so the user might still be inside one even at a few miles
+# off-route. Linear features (rivers, roads, coasts) have arbitrary
+# coords along their length, so distance from the coord is meaningless.
+# event_only articles describe things with no physical landmark and
+# are dropped entirely.
+_KIND_MAX_OFFROUTE_MILES = {
+    "landmark": 2.0,
+    "city": 8.0,
+    "town": 5.0,
+    "river": float("inf"),
+    "road": float("inf"),
+    "coast": float("inf"),
+    "region": float("inf"),
+    # event_only is handled separately — we drop the whole fact.
+}
+
 
 # ============================================================
 # Public entry points
@@ -82,13 +101,16 @@ async def prepare_for_polyline(
     payload — the side effect (POIContent gets warmed) is what we
     care about.
     """
+    import time
     polyline = (polyline or "").strip()
     if not polyline:
         return []
+    t0 = time.monotonic()
 
     wiki = WikipediaFactsService()
     try:
         candidates = await wiki.geosearch_along_polyline(polyline)
+        t_geo = time.monotonic()
         if not candidates:
             return []
         ranked = rank_candidates(
@@ -102,17 +124,44 @@ async def prepare_for_polyline(
             wiki,
             [r.candidate for r in ranked],
         )
+        t_summary = time.monotonic()
+        logger.info(
+            "fact_prep timing: geosearch=%.1fs summarize=%.1fs total=%.1fs "
+            "(candidates=%d ranked=%d)",
+            t_geo - t0, t_summary - t_geo, t_summary - t0,
+            len(candidates), len(ranked),
+        )
     finally:
         await wiki.close()
 
     if not return_response:
         return []
 
+    # We need the decoded polyline for both per-kind filtering (which
+    # uses off-route distance) and route-projection (computing each
+    # fact's distance-along-route so the device can do lookahead-based
+    # narration timing). Decode once here.
+    coords = decode_polyline(polyline)
+    cumulative_along_route = _build_cumulative_along_route(coords)
+
     facts: list[dict] = []
     for ranked_fact, bundle in zip(ranked, bundles):
         if not bundle or not bundle.get("primary"):
             continue
+        kind = bundle.get("feature_kind", "landmark")
+        # Drop event_only entirely — there's nothing for the passenger
+        # to see. Other kinds get a per-kind off-route hard cap that
+        # respects the geographic extent of each kind.
+        if kind == "event_only":
+            continue
         c = ranked_fact.candidate
+        max_offroute = _KIND_MAX_OFFROUTE_MILES.get(kind, _KIND_MAX_OFFROUTE_MILES["landmark"])
+        if c.distance_from_route_miles > max_offroute:
+            continue
+
+        along_route = _project_onto_route(
+            (c.lat, c.lng), coords, cumulative_along_route,
+        )
         facts.append({
             "lat": c.lat,
             "lng": c.lng,
@@ -124,7 +173,9 @@ async def prepare_for_polyline(
             "follow_ups": bundle["follow_ups"],
             "follow_up_audio_urls": bundle["follow_up_audio_urls"],
             "is_thin": bundle["is_thin"],
+            "feature_kind": kind,
             "distance_from_route_miles": c.distance_from_route_miles,
+            "distance_along_route_meters": along_route,
             "ranked_score": ranked_fact.score,
         })
     return facts
@@ -303,6 +354,51 @@ def fire_and_forget_prepare_area(
             logger.warning("fact_prep: area prewarm failed (%s): %s", label, e)
 
     asyncio.create_task(_run())
+
+
+def _build_cumulative_along_route(
+    coords: list[tuple[float, float]],
+) -> list[float]:
+    """Cumulative meters from the start of the polyline at each
+    vertex. cumulative[0] = 0; cumulative[i] = total meters along the
+    polyline up to coords[i]. Used by `_project_onto_route` to convert
+    a projected vertex index to a meters-along-route value.
+
+    Conversion: calculate_distance_miles returns miles; multiply by
+    1609.344 for meters.
+    """
+    if not coords:
+        return []
+    cumulative: list[float] = [0.0]
+    for i in range(1, len(coords)):
+        d_miles = calculate_distance_miles(coords[i - 1], coords[i])
+        cumulative.append(cumulative[-1] + d_miles * 1609.344)
+    return cumulative
+
+
+def _project_onto_route(
+    point: tuple[float, float],
+    coords: list[tuple[float, float]],
+    cumulative: list[float],
+) -> Optional[float]:
+    """For a fact at `point`, find the closest vertex on the polyline
+    and return its cumulative distance-along-route in meters. Vertex
+    granularity is good enough for ~30s lookahead — Mapbox polylines
+    sample densely enough that the worst-case error is small.
+
+    Returns None for an empty polyline; otherwise always returns a
+    float so the frontend can rely on it.
+    """
+    if not coords or not cumulative:
+        return None
+    best_idx = 0
+    best_d = float("inf")
+    for i, vertex in enumerate(coords):
+        d = calculate_distance_miles(point, vertex)
+        if d < best_d:
+            best_d = d
+            best_idx = i
+    return cumulative[best_idx]
 
 
 def _star_samples(

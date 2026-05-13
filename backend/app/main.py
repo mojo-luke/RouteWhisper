@@ -885,6 +885,10 @@ class RouteFact(BaseModel):
     device plays the mp3 directly (premium voice). When null (synthesis
     failed or the env doesn't have OPENAI_API_KEY), the device falls
     back to local Android TTS using the text fields.
+
+    `feature_kind` shapes the filtering — see fact_ranker. `distance_along_route_meters`
+    is how far along the encoded polyline this fact's closest-approach
+    point sits; the device uses it for ~30s lookahead narration timing.
     """
     lat: float
     lng: float
@@ -896,7 +900,9 @@ class RouteFact(BaseModel):
     follow_ups: list[str] = []
     follow_up_audio_urls: list[Optional[str]] = []
     is_thin: bool = False
+    feature_kind: str = "landmark"
     distance_from_route_miles: float
+    distance_along_route_meters: Optional[float] = None
     ranked_score: float
 
 
@@ -1000,7 +1006,8 @@ _TTS_VERSION = "v3-name-lead"
 # History:
 #   v1 — original "friend in passenger seat" prompt
 #   v2 — added the "primary MUST open with place name" rule
-_LLM_VERSION = "v2-name-lead"
+#   v3 — feature_kind classification added to the bundle schema
+_LLM_VERSION = "v3-feature-kind"
 
 
 async def _get_or_summarize(summarizer, tts, wiki, candidate) -> dict:
@@ -1058,7 +1065,9 @@ async def _get_or_summarize(summarizer, tts, wiki, candidate) -> dict:
         )
     else:
         # Full miss: fetch the Wikipedia extract NOW (didn't fetch
-        # upfront, only on demand) and summarize.
+        # upfront, only on demand) and summarize via the async client
+        # so asyncio can run multiple of these concurrently without
+        # thread-pool bottleneck.
         extract = candidate.extract or await wiki.fetch_extract(pageid)
         if not extract:
             # Wikipedia 429'd or the article disappeared — produce
@@ -1072,10 +1081,8 @@ async def _get_or_summarize(summarizer, tts, wiki, candidate) -> dict:
                 "follow_up_audio_urls": [],
                 "is_thin": True,
             }
-        bundle = await asyncio.to_thread(
-            summarizer.summarize_article,
-            candidate.title,
-            extract,
+        bundle = await summarizer.summarize_article_async(
+            candidate.title, extract,
         )
 
     # Synthesize audio for the primary only — that's what fires on
@@ -1090,7 +1097,7 @@ async def _get_or_summarize(summarizer, tts, wiki, candidate) -> dict:
     # Future enhancement: lazy synthesis on Tell-Me-More tap, served
     # via /api/v1/audio/wiki-{pageid}-fu-{i} that synthesizes if not
     # yet cached. Tracked separately.
-    primary_audio = await asyncio.to_thread(tts.synthesize, bundle.primary)
+    primary_audio = await tts.synthesize_async(bundle.primary)
     follow_ups_audio: list = [None] * len(bundle.follow_ups)
 
     stored = {
@@ -1099,6 +1106,7 @@ async def _get_or_summarize(summarizer, tts, wiki, candidate) -> dict:
         "follow_ups": bundle.follow_ups,
         "follow_ups_audio": list(follow_ups_audio),
         "is_thin": bundle.is_thin,
+        "feature_kind": getattr(bundle, "feature_kind", "landmark"),
         "tts_version": _TTS_VERSION,
         "llm_version": _LLM_VERSION,
     }
@@ -1159,6 +1167,7 @@ def _bundle_to_response(stored: dict, pageid: int) -> dict:
         "follow_ups": follow_ups,
         "follow_up_audio_urls": follow_up_audio_urls,
         "is_thin": bool(stored.get("is_thin", False)),
+        "feature_kind": stored.get("feature_kind", "landmark"),
     }
 
 

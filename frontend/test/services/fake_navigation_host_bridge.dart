@@ -379,11 +379,13 @@ class FakeNavigationHostBridge implements NavigationHostBridge {
     required double latitude,
     required double longitude,
     required double speedMph,
+    double distanceAlongRouteMeters = 0.0,
   }) {
     _requireHandlers().onLocationUpdate(
       latitude: latitude,
       longitude: longitude,
       speedMph: speedMph,
+      distanceAlongRouteMeters: distanceAlongRouteMeters,
     );
   }
 

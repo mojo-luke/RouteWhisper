@@ -169,6 +169,13 @@ class MapActivity : AppCompatActivity() {
     private val poiAnnotations = mutableListOf<PointAnnotation>()
     private val poiIdByAnnotation = mutableMapOf<String, String>()
 
+    // Distance the user has traveled along the *active route* in meters.
+    // Updated by the RouteProgressObserver on every progress tick;
+    // bundled into each locationUpdate so the Flutter narration service
+    // can do route-projection-based lookahead (fire a whisper N meters
+    // before a fact's projected route position, not just within radius).
+    private var routeDistanceTraveledMeters: Double = 0.0
+
     // Narration map markers — a separate annotation manager so the layer
     // can be controlled independently of the in-nav POI markers. Markers
     // persist for the whole trip (so the user sees a trail of "everywhere
@@ -453,7 +460,13 @@ class MapActivity : AppCompatActivity() {
             val currentLeg = routeProgress.currentLegProgress?.legIndex ?: -1
             val legRemaining = routeProgress.currentLegProgress?.distanceRemaining ?: 0.0
 
-            Log.d(TAG, "🎯 Route progress: leg=$currentLeg, legRemaining=${legRemaining}m, totalRemaining=${routeProgress.distanceRemaining}m")
+            // Track distance-along-route for the narration service's
+            // lookahead logic. Mapbox doesn't expose distanceTraveled
+            // directly; derive from totalDistance - distanceRemaining.
+            val totalDistance = routeProgress.navigationRoute.directionsRoute.distance() ?: 0.0
+            routeDistanceTraveledMeters = (totalDistance - routeProgress.distanceRemaining).coerceAtLeast(0.0)
+
+            Log.d(TAG, "🎯 Route progress: leg=$currentLeg, legRemaining=${legRemaining}m, totalRemaining=${routeProgress.distanceRemaining}m, traveled=${routeDistanceTraveledMeters}m")
 
             // Detect leg transitions - this works even at high simulation speeds
             if (currentLeg > previousLegIndex && currentLeg >= 0) {
@@ -586,9 +599,16 @@ class MapActivity : AppCompatActivity() {
                 // Phase 1 narration: push the fix to Flutter so the
                 // NarrationService can fire a whisper when we're close
                 // to a fact. Mapbox emits speed in m/s; convert to mph
-                // for Flutter's UX-facing threshold.
+                // for Flutter's UX-facing threshold. distanceAlongRoute
+                // is the latest cached value from the RouteProgressObserver
+                // — used by NarrationService for ~30s lookahead.
                 val mph = location.speed?.let { it * 2.236936 } ?: 0.0
-                MainActivity.sendLocationUpdate(location.latitude, location.longitude, mph)
+                MainActivity.sendLocationUpdate(
+                    location.latitude,
+                    location.longitude,
+                    mph,
+                    routeDistanceTraveledMeters,
+                )
             }
         })
 

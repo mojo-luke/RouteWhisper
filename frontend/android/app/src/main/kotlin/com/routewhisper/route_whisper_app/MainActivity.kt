@@ -85,14 +85,24 @@ class MainActivity : FlutterActivity() {
         /**
          * Forward each GPS fix to Flutter so the NarrationService can decide
          * whether to whisper a fact about a nearby place. Fires at the cadence
-         * Mapbox's LocationObserver emits (roughly 1 Hz during driving) — no
-         * per-side throttling needed at v1.
+         * Mapbox's LocationObserver emits (roughly 1 Hz during driving).
+         *
+         * `distanceAlongRouteMeters` is how far along the active route the
+         * user has traveled — used for lookahead narration timing so a
+         * whisper fires ~30s of upcoming travel before a fact's
+         * projected route position.
          */
-        fun sendLocationUpdate(latitude: Double, longitude: Double, speedMph: Double) {
+        fun sendLocationUpdate(
+            latitude: Double,
+            longitude: Double,
+            speedMph: Double,
+            distanceAlongRouteMeters: Double,
+        ) {
             methodChannelInstance?.invokeMethod("locationUpdate", mapOf(
                 "latitude" to latitude,
                 "longitude" to longitude,
                 "speedMph" to speedMph,
+                "distanceAlongRouteMeters" to distanceAlongRouteMeters,
             ))
         }
     }
