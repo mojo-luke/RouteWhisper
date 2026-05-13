@@ -167,6 +167,10 @@ class _PreferencesScreenState extends State<PreferencesScreen> {
       NavigationService.controller.bridge.setTurnByTurnVoiceEnabled(
         enabled: saved.turnByTurnVoiceEnabled,
       );
+      // Same for the narration mode — apply immediately so the next
+      // whisper respects the new setting without needing an app
+      // relaunch.
+      NavigationService.narration.narrationMode = saved.narrationMode;
     }
   }
 
@@ -364,8 +368,9 @@ class _PreferencesScreenState extends State<PreferencesScreen> {
                 _SectionHeader(
                   title: 'Voice',
                   subtitle:
-                      'Turn the Mapbox turn-by-turn voice off if it\'s grating — '
-                      'POI narration is separate and stays on either way.',
+                      'How chatty the app is during a drive. Two independent '
+                      'controls: the Mapbox turn-by-turn voice, and the POI '
+                      'narration.',
                 ),
                 SwitchListTile.adaptive(
                   contentPadding: EdgeInsets.zero,
@@ -380,9 +385,60 @@ class _PreferencesScreenState extends State<PreferencesScreen> {
                             _profile.copyWith(turnByTurnVoiceEnabled: v),
                           ),
                 ),
+                const SizedBox(height: 12),
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text(
+                    'POI narration',
+                    style: Theme.of(context).textTheme.bodyLarge,
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Text(
+                    _narrationModeDescription(_profile.narrationMode),
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Theme.of(context)
+                              .colorScheme
+                              .onSurface
+                              .withOpacity(0.6),
+                        ),
+                  ),
+                ),
+                SegmentedButton<String>(
+                  segments: const [
+                    ButtonSegment(value: 'auto', label: Text('Auto')),
+                    ButtonSegment(
+                      value: 'tap_to_hear',
+                      label: Text('Tap to hear'),
+                    ),
+                    ButtonSegment(value: 'off', label: Text('Off')),
+                  ],
+                  selected: {_profile.narrationMode},
+                  onSelectionChanged: _saving
+                      ? null
+                      : (selected) => _save(
+                            _profile.copyWith(
+                              narrationMode: selected.first,
+                            ),
+                          ),
+                ),
               ],
             ),
     );
+  }
+
+  static String _narrationModeDescription(String mode) {
+    switch (mode) {
+      case 'auto':
+        return 'Whispers play automatically as you approach interesting places.';
+      case 'tap_to_hear':
+        return 'Markers appear on the map silently. Tap one to hear the story.';
+      case 'off':
+        return 'No markers, no audio. Just navigation.';
+      default:
+        return '';
+    }
   }
 }
 

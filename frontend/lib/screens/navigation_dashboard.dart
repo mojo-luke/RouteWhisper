@@ -84,6 +84,10 @@ class _NavigationDashboardState extends State<NavigationDashboard> {
     NavigationService.controller.bridge.setTurnByTurnVoiceEnabled(
       enabled: profile.turnByTurnVoiceEnabled,
     );
+    // Apply the user's narration mode so the next trip's whispers
+    // (or silence) match the chosen preference. Profile is the
+    // source of truth — settings change → save → hydrate → push.
+    NavigationService.narration.narrationMode = profile.narrationMode;
   }
 
   @override

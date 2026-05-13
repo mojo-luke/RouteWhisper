@@ -550,6 +550,7 @@ class UserProfilePayload(BaseModel):
 
     # Voice controls.
     turn_by_turn_voice_enabled: bool = True
+    narration_mode: str = "auto"  # auto | tap_to_hear | off
 
 
 async def _get_or_create_profile(user_id: str) -> UserProfile:
@@ -573,6 +574,7 @@ async def get_user_profile(user: CurrentUser = Depends(get_current_user)):
         recommendations_max_per_trip=p.recommendations_max_per_trip,
         recommendations_min_gap_minutes=p.recommendations_min_gap_minutes,
         turn_by_turn_voice_enabled=p.turn_by_turn_voice_enabled,
+        narration_mode=p.narration_mode,
     )
 
 
@@ -591,6 +593,13 @@ async def update_user_profile(
     p.recommendations_max_per_trip = payload.recommendations_max_per_trip
     p.recommendations_min_gap_minutes = payload.recommendations_min_gap_minutes
     p.turn_by_turn_voice_enabled = payload.turn_by_turn_voice_enabled
+    # Defensive: clamp to the allowed set so a future client typo doesn't
+    # poison the user's profile.
+    p.narration_mode = (
+        payload.narration_mode
+        if payload.narration_mode in {"auto", "tap_to_hear", "off"}
+        else "auto"
+    )
     p.updated_at = datetime.utcnow()
     await p.save()
     return payload

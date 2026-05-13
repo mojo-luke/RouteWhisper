@@ -52,6 +52,10 @@ class UserProfile {
   // behavior; users who find the Mapbox voice grating turn it off.
   final bool turnByTurnVoiceEnabled;
 
+  // Narration mode — see backend doc on UserProfile.narration_mode.
+  // "auto" | "tap_to_hear" | "off".
+  final String narrationMode;
+
   const UserProfile({
     this.preferredPoiTypes = const [],
     this.defaultTimeBudgetMinutes,
@@ -61,6 +65,7 @@ class UserProfile {
     this.recommendationsMaxPerTrip = 3,
     this.recommendationsMinGapMinutes = 15,
     this.turnByTurnVoiceEnabled = true,
+    this.narrationMode = 'auto',
   });
 
   factory UserProfile.fromJson(Map<String, dynamic> json) => UserProfile(
@@ -81,6 +86,7 @@ class UserProfile {
             (json['recommendations_min_gap_minutes'] as int?) ?? 15,
         turnByTurnVoiceEnabled:
             (json['turn_by_turn_voice_enabled'] as bool?) ?? true,
+        narrationMode: json['narration_mode'] as String? ?? 'auto',
       );
 
   Map<String, dynamic> toJson() => {
@@ -92,6 +98,7 @@ class UserProfile {
         'recommendations_max_per_trip': recommendationsMaxPerTrip,
         'recommendations_min_gap_minutes': recommendationsMinGapMinutes,
         'turn_by_turn_voice_enabled': turnByTurnVoiceEnabled,
+        'narration_mode': narrationMode,
       };
 
   UserProfile copyWith({
@@ -104,6 +111,7 @@ class UserProfile {
     int? recommendationsMaxPerTrip,
     int? recommendationsMinGapMinutes,
     bool? turnByTurnVoiceEnabled,
+    String? narrationMode,
   }) =>
       UserProfile(
         preferredPoiTypes: preferredPoiTypes ?? this.preferredPoiTypes,
@@ -120,6 +128,7 @@ class UserProfile {
             recommendationsMinGapMinutes ?? this.recommendationsMinGapMinutes,
         turnByTurnVoiceEnabled:
             turnByTurnVoiceEnabled ?? this.turnByTurnVoiceEnabled,
+        narrationMode: narrationMode ?? this.narrationMode,
       );
 }
 

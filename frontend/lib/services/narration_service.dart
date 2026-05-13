@@ -46,6 +46,19 @@ class NarrationService extends ChangeNotifier {
     _bridge = bridge;
   }
 
+  /// Narration mode (Auto / Tap-to-hear / Off). Pushed from
+  /// UserProfile at trip start; mutates how `_fire` behaves:
+  ///
+  ///   "auto"        — drop marker + show banner + speak (default)
+  ///   "tap_to_hear" — drop marker + show banner, silent. User
+  ///                   triggers audio via Replay/banner controls.
+  ///   "off"         — short-circuit; no marker, no banner, no
+  ///                   audio. The fact still gets removed from the
+  ///                   queue so we don't re-evaluate it.
+  ///
+  /// Empty/unknown values fall back to "auto" defensively.
+  String narrationMode = 'auto';
+
   /// Tuning constants — surfaced as fields so tests can override.
   Duration minSpacing = const Duration(seconds: 30);
   // Fallback for facts without a route-projection (e.g., area
@@ -256,18 +269,35 @@ class NarrationService extends ChangeNotifier {
   /// it to "active" for the pulsing animation. Records a `played`
   /// interaction event for Phase 3 personalization.
   void _fire(RouteFact fact, DateTime now) {
+    // Off mode: silently skip. Marker doesn't drop, banner doesn't
+    // show, audio doesn't play. The fact gets removed from the queue
+    // by the caller so we don't re-fire it once the user moves out
+    // and back in to proximity.
+    if (narrationMode == 'off') {
+      debugPrint('🗣️ Whisper suppressed (mode=off): "${fact.articleTitle}"');
+      return;
+    }
+
     _active = _ActiveNarration(fact: fact, firedAt: now);
     _followUpIndex = 0;
     _lastSpokeAt = now;
     debugPrint('🗣️ Whisper: "${fact.articleTitle}" — ${fact.primary}');
-    _speak(fact.primary, fact.primaryAudioUrl);
+
+    // Tap-to-hear: drop marker + show banner but stay silent. User
+    // taps Replay (or the native banner's play button) to actually
+    // hear it. We DON'T fire a `played` event yet — that records
+    // when audio actually plays, via replay() or speak().
+    final shouldSpeakNow = narrationMode != 'tap_to_hear';
+    if (shouldSpeakNow) {
+      _speak(fact.primary, fact.primaryAudioUrl);
+      NarrationFeedbackService.recordEvent(
+        pageid: fact.wikipediaPageid,
+        eventType: NarrationEvent.played,
+        tripId: _currentTripId,
+      );
+    }
     _dropMarker(fact);
     _pushNarrationBanner(fact);
-    NarrationFeedbackService.recordEvent(
-      pageid: fact.wikipediaPageid,
-      eventType: NarrationEvent.played,
-      tripId: _currentTripId,
-    );
     notifyListeners();
   }
 

@@ -270,6 +270,15 @@ class UserProfile(Document):
     # and rely on the visual nav UI + POI narration only.
     turn_by_turn_voice_enabled: bool = True
 
+    # Narration mode — how chatty the app is during a drive.
+    #   "auto"        → whispers fire automatically at proximity (default)
+    #   "tap_to_hear" → markers drop on the map but audio is silent;
+    #                   user taps the marker / card to play
+    #   "off"         → nothing fires (no markers, no audio)
+    # Users opt into less talking when the auto-narration feels too
+    # intrusive — same trust principle as the turn-by-turn voice toggle.
+    narration_mode: str = "auto"
+
     updated_at: datetime = datetime.utcnow()
 
     class Settings:
