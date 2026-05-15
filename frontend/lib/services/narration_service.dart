@@ -3,6 +3,8 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 
 import '../models/route_fact.dart';
+import '../models/route_monologue.dart';
+import 'monologue_service.dart';
 import 'narration_feedback_service.dart';
 import 'navigation_host_bridge.dart';
 import 'route_facts_service.dart';
@@ -28,15 +30,19 @@ class NarrationService extends ChangeNotifier {
   NarrationService({
     NavigationHostBridge? bridge,
     Future<List<RouteFact>> Function(String polyline)? fetcher,
+    Future<RouteMonologue?> Function(String tripId)? monologueFetcher,
     DateTime Function()? now,
   })  : _bridge = bridge,
         _fetcher = fetcher ?? RouteFactsService.fetchForRoute,
+        _monologueFetcher =
+            monologueFetcher ?? MonologueService.fetchForTrip,
         _now = now ?? DateTime.now;
 
   // Test seams. Production passes nothing and the controller calls
   // `bindBridge` once during initialize() to give us the live bridge.
   NavigationHostBridge? _bridge;
   final Future<List<RouteFact>> Function(String polyline) _fetcher;
+  final Future<RouteMonologue?> Function(String tripId) _monologueFetcher;
   final DateTime Function() _now;
 
   /// Called by NavigationController.initialize() to wire the bridge
@@ -134,6 +140,17 @@ class NarrationService extends ChangeNotifier {
   /// indicators or just stay invisible.
   bool get hasLoadedFacts => _queue.isNotEmpty || _active != null;
 
+  // Monologue v1 state. The companion's authored narration track,
+  // distinct from the per-POI Wikipedia queue above. See
+  // docs/companion-monologue-v1-plan.md.
+  List<MonologueUtterance> _monologueQueue = const [];
+  final Map<String, ({double lat, double lng})> _townCentroids = {};
+
+  /// Radius around a town centroid that counts as "entered the town."
+  /// 3 miles handles drive-throughs without firing far too early.
+  /// Surfaced so tests can tighten this for deterministic GPS frames.
+  double townEntryRadiusMiles = 3.0;
+
   /// Kick off a trip's narration by fetching facts for the encoded
   /// polyline. Idempotent for the same polyline; calling again with
   /// a different polyline replaces the queue.
@@ -145,26 +162,47 @@ class NarrationService extends ChangeNotifier {
     debugPrint('🗣️ Narration: loading facts for trip...');
     _isLoading = true;
     _queue = const [];
+    _monologueQueue = const [];
+    _townCentroids.clear();
     _active = null;
     _followUpIndex = 0;
     _lastSpokeAt = null;
     _currentTripId = tripId;
     notifyListeners();
 
-    // Fetch facts + saved pageids in parallel. Saves don't block
-    // narration: if listSaved fails the card just shows un-starred
-    // hearts and the user can still save.
+    // Fetch facts + saved pageids + monologue (if tripId is known)
+    // in parallel. Saves don't block narration: if listSaved fails the
+    // card just shows un-starred hearts and the user can still save.
+    // The monologue fetch is also non-blocking — if it fails or the
+    // trip has no monologue yet, only per-POI narration runs.
     final results = await Future.wait([
       _fetcher(polyline),
       NarrationFeedbackService.listSaved(),
+      if (tripId != null && tripId.isNotEmpty)
+        _monologueFetcher(tripId)
+      else
+        Future<RouteMonologue?>.value(null),
     ]);
     final facts = results[0] as List<RouteFact>;
     final saved = results[1] as List<SavedFactSummary>;
+    final monologue = results[2] as RouteMonologue?;
 
     _queue = facts;
     _savedPageids
       ..clear()
       ..addAll(saved.map((s) => s.wikipediaPageid));
+    if (monologue != null) {
+      _monologueQueue = List<MonologueUtterance>.from(monologue.utterances);
+      _townCentroids.clear();
+      for (final town in monologue.towns) {
+        _townCentroids[town.name.toLowerCase()] =
+            (lat: town.lat, lng: town.lng);
+      }
+      debugPrint(
+        '🗣️ Monologue: loaded ${monologue.utterances.length} utterances '
+        'across ${monologue.towns.length} towns',
+      );
+    }
     _isLoading = false;
     debugPrint(
         '🗣️ Narration: loaded ${facts.length} facts, ${saved.length} saved');
@@ -179,6 +217,8 @@ class NarrationService extends ChangeNotifier {
   /// that).
   void endTrip() {
     _queue = const [];
+    _monologueQueue = const [];
+    _townCentroids.clear();
     _active = null;
     _followUpIndex = 0;
     _lastSpokeAt = null;
@@ -213,13 +253,24 @@ class NarrationService extends ChangeNotifier {
     required double speedMph,
     double distanceAlongRouteMeters = 0.0,
   }) {
-    if (_queue.isEmpty) return;
+    if (_queue.isEmpty && _monologueQueue.isEmpty) return;
     if (speedMph > maxSpeedMph) return;
 
     final now = _now();
     if (_lastSpokeAt != null && now.difference(_lastSpokeAt!) < minSpacing) {
       return;
     }
+
+    // Monologue track: fire the next anchored utterance if the user
+    // has entered its town. Strictly in author order so the narrative
+    // arc unfolds correctly — utterances anchored to towns we've
+    // already passed naturally drop off the head as we advance.
+    if (_monologueQueue.isNotEmpty) {
+      final fired = _maybeFireMonologue(latitude, longitude, now);
+      if (fired) return; // Respect spacing — per-POI waits 30s.
+    }
+
+    if (_queue.isEmpty) return;
 
     final lookaheadM = _lookaheadMeters(speedMph);
 
@@ -275,6 +326,46 @@ class NarrationService extends ChangeNotifier {
     if (raw < minLookaheadMeters) return minLookaheadMeters;
     if (raw > maxLookaheadMeters) return maxLookaheadMeters;
     return raw;
+  }
+
+  /// Try to fire the next monologue utterance if the user has entered
+  /// its anchor town. Returns true if an utterance fired, false
+  /// otherwise. Skips silently when narrationMode == "off".
+  ///
+  /// Strict author-order: only the head of the queue is checked. If
+  /// the user skips a town (re-route, alternate path), the utterances
+  /// anchored to it stay at the head of the queue and never fire,
+  /// because the next entry checked never matches their anchor either.
+  /// Future polish (Slice F) can add a "drop stale utterances after
+  /// N miles" sweep to avoid that.
+  bool _maybeFireMonologue(double lat, double lng, DateTime now) {
+    if (_monologueQueue.isEmpty) return false;
+    final utt = _monologueQueue.first;
+    final centroid = _townCentroids[utt.anchor.toLowerCase()];
+    if (centroid == null) return false;
+    final dist = _haversineMiles(lat, lng, centroid.lat, centroid.lng);
+    if (dist > townEntryRadiusMiles) return false;
+
+    // Pop and fire.
+    _monologueQueue = _monologueQueue.sublist(1);
+    if (narrationMode == 'off') {
+      debugPrint(
+        '🎙️ Monologue [${utt.i}] @ ${utt.anchor} suppressed (mode=off)',
+      );
+      return true;
+    }
+    debugPrint(
+      '🎙️ Monologue [${utt.i}] @ ${utt.anchor} (${dist.toStringAsFixed(1)}mi): '
+      '${utt.text}',
+    );
+    _lastSpokeAt = now;
+    // tap_to_hear is a per-POI affordance (the card has Replay).
+    // Monologue is audio-only in v1, so silent mode means we still
+    // pop the queue (advance the narrative) but skip the audio.
+    if (narrationMode != 'tap_to_hear') {
+      _speak(utt.text, utt.audioUrl);
+    }
+    return true;
   }
 
   /// Speak the primary line of [fact] now via the native bridge,

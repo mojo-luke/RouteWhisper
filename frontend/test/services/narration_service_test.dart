@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frontend/models/route_fact.dart';
+import 'package:frontend/models/route_monologue.dart';
 import 'package:frontend/services/narration_service.dart';
 
 import 'fake_navigation_host_bridge.dart';
@@ -323,7 +324,165 @@ void main() {
     service.endTrip();
     expect(bridge.callsTo('clearNarrationMarkers'), hasLength(1));
   });
+
+  // --- Monologue track (Slice E) ---
+
+  test('monologue: utterance fires when entering its anchor town',
+      () async {
+    final service = NarrationService(
+      bridge: bridge,
+      fetcher: (_) async => const [],
+      monologueFetcher: (_) async => _twoTownMonologue(),
+      now: () => fakeNow,
+    );
+    await service.startTrip('p', tripId: 'trip-1');
+
+    // First location update — SF (37.7749, -122.4194) — should fire
+    // utterance 1 ("@ San Francisco").
+    service.onLocationUpdate(
+      latitude: 37.7749,
+      longitude: -122.4194,
+      speedMph: 30.0,
+    );
+    final played = bridge.callsTo('playNarrationAudio');
+    expect(played, hasLength(1));
+    expect(played.last.args['url'], '/api/v1/audio/monologue/sf-utt');
+  });
+
+  test('monologue: fires strictly in author order across moves',
+      () async {
+    final service = NarrationService(
+      bridge: bridge,
+      fetcher: (_) async => const [],
+      monologueFetcher: (_) async => _twoTownMonologue(),
+      now: () => fakeNow,
+    );
+    await service.startTrip('p', tripId: 'trip-1');
+
+    // Enter SF — utt 1 fires.
+    service.onLocationUpdate(
+      latitude: 37.7749, longitude: -122.4194, speedMph: 30.0,
+    );
+    expect(bridge.callsTo('playNarrationAudio'), hasLength(1));
+
+    // Same GPS, but 30s+ later — should NOT re-fire (utt 2 is anchored
+    // to a different town).
+    fakeNow = fakeNow.add(const Duration(seconds: 31));
+    service.onLocationUpdate(
+      latitude: 37.7749, longitude: -122.4194, speedMph: 30.0,
+    );
+    expect(bridge.callsTo('playNarrationAudio'), hasLength(1));
+
+    // Move to Tahoe — utt 2 fires.
+    service.onLocationUpdate(
+      latitude: 38.9399, longitude: -119.9772, speedMph: 30.0,
+    );
+    final played = bridge.callsTo('playNarrationAudio');
+    expect(played, hasLength(2));
+    expect(played.last.args['url'], '/api/v1/audio/monologue/tahoe-utt');
+  });
+
+  test('monologue: 30s spacing rule blocks back-to-back utterances',
+      () async {
+    final service = NarrationService(
+      bridge: bridge,
+      fetcher: (_) async => const [],
+      monologueFetcher: (_) async => _sameTownTwoUtterances(),
+      now: () => fakeNow,
+    );
+    await service.startTrip('p', tripId: 'trip-1');
+
+    service.onLocationUpdate(
+      latitude: 37.7749, longitude: -122.4194, speedMph: 30.0,
+    );
+    expect(bridge.callsTo('playNarrationAudio'), hasLength(1));
+
+    // 10s later, still in town — utt 2 should NOT fire yet.
+    fakeNow = fakeNow.add(const Duration(seconds: 10));
+    service.onLocationUpdate(
+      latitude: 37.7749, longitude: -122.4194, speedMph: 30.0,
+    );
+    expect(bridge.callsTo('playNarrationAudio'), hasLength(1));
+
+    // 31s after first fire — utt 2 fires.
+    fakeNow = fakeNow.add(const Duration(seconds: 21));
+    service.onLocationUpdate(
+      latitude: 37.7749, longitude: -122.4194, speedMph: 30.0,
+    );
+    expect(bridge.callsTo('playNarrationAudio'), hasLength(2));
+  });
+
+  test('monologue: endTrip clears queue and town centroids', () async {
+    final service = NarrationService(
+      bridge: bridge,
+      fetcher: (_) async => const [],
+      monologueFetcher: (_) async => _twoTownMonologue(),
+      now: () => fakeNow,
+    );
+    await service.startTrip('p', tripId: 'trip-1');
+    service.endTrip();
+    // No anchor town remembered → utterance can't fire.
+    service.onLocationUpdate(
+      latitude: 37.7749, longitude: -122.4194, speedMph: 30.0,
+    );
+    expect(bridge.callsTo('playNarrationAudio'), isEmpty);
+  });
 }
+
+
+/// Fixture: two utterances, one anchored to SF, one to South Lake Tahoe.
+RouteMonologue _twoTownMonologue() => RouteMonologue(
+      polylineHash: 'p_hash',
+      vibeHash: 'v_hash',
+      narrationThemes: const ['history'],
+      stopInterests: const [],
+      towns: const [
+        MonologueTown(name: 'San Francisco', lat: 37.7749, lng: -122.4194),
+        MonologueTown(name: 'South Lake Tahoe', lat: 38.9399, lng: -119.9772),
+      ],
+      characterization: 'A long drive over the Sierra.',
+      utterances: const [
+        MonologueUtterance(
+          i: 1, anchor: 'San Francisco',
+          text: 'Leaving SF...',
+          audioUrl: '/api/v1/audio/monologue/sf-utt',
+        ),
+        MonologueUtterance(
+          i: 2, anchor: 'South Lake Tahoe',
+          text: 'And there it is, the lake.',
+          audioUrl: '/api/v1/audio/monologue/tahoe-utt',
+        ),
+      ],
+      stops: const [],
+    );
+
+
+/// Fixture: two utterances both anchored to the same town. Used to
+/// verify the 30s spacing rule between successive utterances.
+RouteMonologue _sameTownTwoUtterances() => RouteMonologue(
+      polylineHash: 'p_hash',
+      vibeHash: 'v_hash',
+      narrationThemes: const ['history'],
+      stopInterests: const [],
+      towns: const [
+        MonologueTown(name: 'San Francisco', lat: 37.7749, lng: -122.4194),
+      ],
+      characterization: '',
+      utterances: const [
+        MonologueUtterance(
+          i: 1, anchor: 'San Francisco',
+          text: 'First thought.',
+          audioUrl: '/api/v1/audio/monologue/utt-1',
+        ),
+        MonologueUtterance(
+          i: 2, anchor: 'San Francisco',
+          text: 'Second thought, on the same drive.',
+          audioUrl: '/api/v1/audio/monologue/utt-2',
+        ),
+      ],
+      stops: const [],
+    );
+
 
 /// Two-fact fixture: San Francisco (with 2 follow-ups, audio for all)
 /// and Coit Tower (thin). Coords are real; both will be in proximity
