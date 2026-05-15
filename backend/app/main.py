@@ -37,6 +37,7 @@ from app.utils.polyline import (
 from app.auth import CurrentUser, get_current_user
 from app.database import (
     init_mongodb,
+    MonologueAudio,
     NarrationInteraction,
     POIContent,
     RouteMonologue,
@@ -1634,6 +1635,28 @@ async def route_monologue(
         characterization=doc.characterization,
         utterances=doc.utterances,
         stops=doc.stops,
+    )
+
+
+@app.get("/api/v1/audio/monologue/{text_sha256}")
+async def audio_monologue(text_sha256: str):
+    """Serve the pre-synthesized mp3 for a single monologue utterance.
+
+    Content-addressed by sha256(utterance_text), so identical lines
+    across routes share one stored mp3. No auth — audio bytes are
+    not secret, and gating them would force the Android MediaPlayer
+    to attach an auth header, which is awkward.
+    """
+    from fastapi.responses import Response
+    if len(text_sha256) != 64:
+        raise HTTPException(status_code=400, detail="bad text_sha256")
+    doc = await MonologueAudio.find_one(MonologueAudio.text_sha256 == text_sha256)
+    if doc is None or not doc.audio_bytes:
+        raise HTTPException(status_code=404, detail="No audio for that text")
+    return Response(
+        content=bytes(doc.audio_bytes),
+        media_type="audio/mpeg",
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
     )
 
 

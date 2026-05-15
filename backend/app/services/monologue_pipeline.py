@@ -28,7 +28,8 @@ from typing import Optional
 
 from anthropic import AsyncAnthropic
 
-from app.database import RouteMonologue
+from app.database import MonologueAudio, RouteMonologue
+from app.services.openai_tts import TtsSynthesizer
 from app.services.town_extractor import Town, extract_towns
 
 logger = logging.getLogger(__name__)
@@ -200,6 +201,12 @@ async def generate_monologue(
         logger.warning("monologue_pipeline: authoring returned no artifact")
         return None
 
+    # Stage 4 (Slice B): TTS-synthesize each utterance, populate
+    # audio_url. Each utterance is content-addressed by sha256(text)
+    # so identical lines across routes share an mp3.
+    utterances = artifact.get("monologue", []) or []
+    await _attach_audio_urls(utterances)
+
     # Persist and return
     canonical_interests = _canonicalize_stop_interests(stop_interests)
     canonical_themes = sorted(set(narration_themes))
@@ -210,14 +217,15 @@ async def generate_monologue(
         stop_interests=canonical_interests,
         towns=[t.model_dump() for t in towns],
         characterization=characterization,
-        utterances=artifact.get("monologue", []),
+        utterances=utterances,
         stops=artifact.get("stops", []),
     )
     await doc.insert()
+    audio_count = sum(1 for u in utterances if u.get("audio_url"))
     logger.info(
-        "monologue_pipeline: persisted p=%s v=%s towns=%d utt=%d stops=%d",
+        "monologue_pipeline: persisted p=%s v=%s towns=%d utt=%d audio=%d stops=%d",
         p_hash[:8], v_hash[:8],
-        len(towns), len(doc.utterances), len(doc.stops),
+        len(towns), len(doc.utterances), audio_count, len(doc.stops),
     )
     return doc
 
@@ -277,6 +285,70 @@ async def _characterize_route(
     except Exception as e:
         logger.error("monologue_pipeline: characterize failed: %r", e)
         return None
+
+
+# -------- Audio synthesis ------------------------------------------
+
+# Bounded concurrency for TTS calls. OpenAI rate-limits TTS at a few
+# hundred per minute; 4 in parallel is comfortably under that while
+# still finishing 10 utterances in ~3-4 seconds wall clock.
+_TTS_CONCURRENCY = 4
+
+
+async def _attach_audio_urls(utterances: list[dict]) -> None:
+    """Synthesize an mp3 for each utterance (or fetch from cache) and
+    set `audio_url` on the utterance dict.
+
+    Mutates the input list in place. Missing TTS (no key, transient
+    failure) sets `audio_url=None` so the device can fall back to its
+    own local TTS without breaking the response shape.
+    """
+    if not os.getenv("OPENAI_API_KEY"):
+        logger.warning("monologue_pipeline: no OPENAI_API_KEY; skipping TTS")
+        for u in utterances:
+            u["audio_url"] = None
+        return
+
+    synth = TtsSynthesizer()
+    sem = asyncio.Semaphore(_TTS_CONCURRENCY)
+
+    async def _one(u: dict) -> None:
+        text = (u.get("utterance") or "").strip()
+        if not text:
+            u["audio_url"] = None
+            return
+        text_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        # Cache check — same text across any number of routes shares
+        # one stored mp3 keyed by its sha256.
+        existing = await MonologueAudio.find_one(
+            MonologueAudio.text_sha256 == text_hash,
+        )
+        if existing:
+            u["audio_url"] = f"/api/v1/audio/monologue/{text_hash}"
+            return
+        async with sem:
+            try:
+                audio = await synth.synthesize_async(text)
+            except Exception as e:
+                logger.warning("monologue_pipeline: TTS failed for utt: %r", e)
+                u["audio_url"] = None
+                return
+        if not audio:
+            u["audio_url"] = None
+            return
+        # Persist; ignore duplicate-key races (two routes hit same text
+        # at the same time — one wins, both get the URL).
+        try:
+            await MonologueAudio(
+                text_sha256=text_hash,
+                audio_bytes=audio,
+                char_count=len(text),
+            ).insert()
+        except Exception as e:
+            logger.info("monologue_pipeline: MonologueAudio insert raced: %r", e)
+        u["audio_url"] = f"/api/v1/audio/monologue/{text_hash}"
+
+    await asyncio.gather(*[_one(u) for u in utterances])
 
 
 async def _author_monologue_and_stops(

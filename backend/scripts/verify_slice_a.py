@@ -26,7 +26,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.database import RouteMonologue, MONGODB_URL  # type: ignore  # noqa: E402
+from app.database import (  # type: ignore  # noqa: E402
+    RouteMonologue, MONGODB_URL, MONGODB_DATABASE,
+)
 from app.services.mapbox_directions import fetch_polyline  # noqa: E402
 from app.services.monologue_pipeline import (  # noqa: E402
     generate_monologue, polyline_hash, vibe_hash,
@@ -43,7 +45,7 @@ ROUTE_LABEL = "San Francisco, CA -> South Lake Tahoe, CA"
 async def init_db():
     client = AsyncIOMotorClient(MONGODB_URL)
     await init_beanie(
-        database=client["routewhisper"],
+        database=client[MONGODB_DATABASE],
         document_models=[RouteMonologue],
     )
 

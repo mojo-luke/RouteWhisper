@@ -488,6 +488,32 @@ class RouteMonologue(Document):
         ]
 
 
+class MonologueAudio(Document):
+    """Pre-synthesized mp3 for a single utterance, content-addressed by
+    sha256 of the utterance text.
+
+    Same-text-different-route dedupes automatically — if user A's
+    monologue and user B's monologue both happen to contain the
+    sentence "And there's the lake," they share one stored mp3.
+    Across the cohort of routes through famous corridors, repeat
+    phrasings are common enough that this is a real win.
+
+    Storing bytes in MongoDB rather than on disk / S3 keeps deploy
+    simple and matches the wiki-narration pattern (POIContent.facts[]
+    inline-stores its audio bytes the same way).
+    """
+    text_sha256: str  # 64-char hex, the cache key
+    audio_bytes: bytes  # raw mp3, served as audio/mpeg
+    char_count: int  # for cost telemetry; OpenAI charges per char
+    created_at: datetime = datetime.utcnow()
+
+    class Settings:
+        name = "monologue_audio"
+        indexes = [
+            [("text_sha256", 1)],
+        ]
+
+
 # =============================================================================
 # Redis Setup (Caching & Sessions)
 # =============================================================================
@@ -525,6 +551,7 @@ async def init_mongodb():
             NarrationInteraction,
             SavedFact,
             RouteMonologue,
+            MonologueAudio,
         ],
     )
 
