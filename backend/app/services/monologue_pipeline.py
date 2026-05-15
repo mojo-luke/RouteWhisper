@@ -30,7 +30,9 @@ from anthropic import AsyncAnthropic
 
 from app.database import MonologueAudio, RouteMonologue
 from app.services.openai_tts import TtsSynthesizer
+from app.services.poi_verifier import verify_stops
 from app.services.town_extractor import Town, extract_towns
+from app.utils.polyline import decode_polyline
 
 logger = logging.getLogger(__name__)
 
@@ -207,6 +209,21 @@ async def generate_monologue(
     utterances = artifact.get("monologue", []) or []
     await _attach_audio_urls(utterances)
 
+    # Stage 5 (Slice C): Verify each LLM-proposed stop against
+    # Mapbox Search Box (with OSM Overpass fallback). Drop anything
+    # we can't pin to real coords on the route. The monologue's
+    # narrative references to places stay intact regardless — only
+    # the tappable stop cards are gated by verification.
+    proposed_stops = artifact.get("stops", []) or []
+    if proposed_stops:
+        route_coords = decode_polyline(polyline)
+        verified_stops = await verify_stops(
+            proposed_stops, route_coords,
+            [t.model_dump() for t in towns],
+        )
+    else:
+        verified_stops = []
+
     # Persist and return
     canonical_interests = _canonicalize_stop_interests(stop_interests)
     canonical_themes = sorted(set(narration_themes))
@@ -218,14 +235,16 @@ async def generate_monologue(
         towns=[t.model_dump() for t in towns],
         characterization=characterization,
         utterances=utterances,
-        stops=artifact.get("stops", []),
+        stops=verified_stops,
     )
     await doc.insert()
     audio_count = sum(1 for u in utterances if u.get("audio_url"))
     logger.info(
-        "monologue_pipeline: persisted p=%s v=%s towns=%d utt=%d audio=%d stops=%d",
+        "monologue_pipeline: persisted p=%s v=%s towns=%d utt=%d audio=%d "
+        "stops=%d (verified from %d proposed)",
         p_hash[:8], v_hash[:8],
-        len(towns), len(doc.utterances), audio_count, len(doc.stops),
+        len(towns), len(doc.utterances), audio_count,
+        len(doc.stops), len(proposed_stops),
     )
     return doc
 
