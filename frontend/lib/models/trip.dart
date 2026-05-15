@@ -43,6 +43,17 @@ class Trip {
   /// Null on legacy trips created before this field existed.
   final String? polyline;
 
+  /// Monologue v1 — see docs/companion-monologue-v1-plan.md.
+  /// Two independent dimensions of trip vibe:
+  /// - [narrationThemes] tilts what the companion talks about
+  ///   (history, landscape, food_culture, quirky)
+  /// - [stopInterests] surfaces "pull off here" cards; each entry is
+  ///   `{category, detail}` where category ∈ food/entertainment/
+  ///   attractions/shopping and detail is an optional free-text
+  ///   qualifier ("Mexican, hole-in-the-wall").
+  final List<String> narrationThemes;
+  final List<Map<String, dynamic>> stopInterests;
+
   /// ISO-8601 timestamps from the server. Local-only drafts leave both null.
   final DateTime? createdAt;
   final DateTime? updatedAt;
@@ -65,6 +76,8 @@ class Trip {
     this.days = const [],
     this.notes,
     this.polyline,
+    this.narrationThemes = const ['history'],
+    this.stopInterests = const [],
     this.createdAt,
     this.updatedAt,
   });
@@ -90,6 +103,11 @@ class Trip {
             .cast<Map<String, dynamic>>(),
         notes: json['notes'] as String?,
         polyline: json['polyline'] as String?,
+        narrationThemes: ((json['narration_themes'] as List?) ?? const ['history'])
+            .map((e) => e.toString())
+            .toList(),
+        stopInterests: ((json['stop_interests'] as List?) ?? const [])
+            .cast<Map<String, dynamic>>(),
         createdAt: json['created_at'] != null
             ? DateTime.tryParse(json['created_at'] as String)
             : null,
@@ -121,6 +139,8 @@ class Trip {
         // Server overrides on save when origin/destination change; we
         // include it here so a no-op PUT preserves the value.
         if (polyline != null) 'polyline': polyline,
+        'narration_themes': narrationThemes,
+        'stop_interests': stopInterests,
       };
 
   Trip copyWith({
@@ -140,6 +160,8 @@ class Trip {
     List<Map<String, dynamic>>? pins,
     List<Map<String, dynamic>>? days,
     String? notes,
+    List<String>? narrationThemes,
+    List<Map<String, dynamic>>? stopInterests,
     DateTime? createdAt,
     DateTime? updatedAt,
     bool clearStartDate = false,
@@ -165,6 +187,8 @@ class Trip {
         pins: pins ?? this.pins,
         days: days ?? this.days,
         notes: clearNotes ? null : (notes ?? this.notes),
+        narrationThemes: narrationThemes ?? this.narrationThemes,
+        stopInterests: stopInterests ?? this.stopInterests,
         createdAt: createdAt ?? this.createdAt,
         updatedAt: updatedAt ?? this.updatedAt,
       );
