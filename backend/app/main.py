@@ -39,6 +39,7 @@ from app.database import (
     init_mongodb,
     NarrationInteraction,
     POIContent,
+    RouteMonologue,
     SavedFact,
     Trip,
     UserProfile,
@@ -632,6 +633,12 @@ class TripPayload(BaseModel):
     days: list = Field(default_factory=list)
     notes: Optional[str] = None
     polyline: Optional[str] = None
+    # Monologue v1 vibe — see docs/companion-monologue-v1-plan.md.
+    # narration_themes drives what the companion talks about; stop
+    # interests drive what gets surfaced as a stop card. Defaults
+    # match the v1 plan (history-only narration, no stops).
+    narration_themes: list[str] = Field(default_factory=lambda: ["history"])
+    stop_interests: list[dict] = Field(default_factory=list)
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 
@@ -655,6 +662,8 @@ def _trip_to_payload(trip: Trip) -> TripPayload:
         days=trip.days,
         notes=trip.notes,
         polyline=trip.polyline,
+        narration_themes=trip.narration_themes,
+        stop_interests=trip.stop_interests,
         created_at=trip.created_at.isoformat() if trip.created_at else None,
         updated_at=trip.updated_at.isoformat() if trip.updated_at else None,
     )
@@ -713,6 +722,8 @@ async def create_trip(
         pins=payload.pins,
         days=payload.days,
         notes=payload.notes,
+        narration_themes=payload.narration_themes or ["history"],
+        stop_interests=payload.stop_interests or [],
         created_at=now,
         updated_at=now,
     )
@@ -781,6 +792,8 @@ async def update_trip(
     trip.pins = payload.pins
     trip.days = payload.days
     trip.notes = payload.notes
+    trip.narration_themes = payload.narration_themes or ["history"]
+    trip.stop_interests = payload.stop_interests or []
     # Track whether origin/destination changed; if so, the prior
     # polyline + per-route cache are stale and we recompute.
     origin_changed = (
@@ -1522,6 +1535,106 @@ async def list_discoveries(user: CurrentUser = Depends(get_current_user)):
     items.sort(key=_latest, reverse=True)
 
     return {"items": [i.model_dump() for i in items]}
+
+
+# =============================================================================
+# Monologue v1 — companion narration track
+# See docs/companion-monologue-v1-plan.md
+# =============================================================================
+
+class MonologueRequest(BaseModel):
+    """Request body for POST /api/v1/route/monologue.
+
+    Either provide `trip_id` (loads polyline + vibe from the saved Trip)
+    or provide an inline `polyline` + `route_label` + vibe fields. The
+    inline form is mostly for testing; the production caller passes
+    `trip_id`.
+    """
+    trip_id: Optional[str] = None
+    polyline: Optional[str] = None
+    route_label: Optional[str] = None
+    narration_themes: Optional[list[str]] = None
+    stop_interests: Optional[list[dict]] = None
+
+
+class MonologueResponse(BaseModel):
+    """Server-side artifact for a route+vibe monologue."""
+    polyline_hash: str
+    vibe_hash: str
+    narration_themes: list[str]
+    stop_interests: list[dict]
+    towns: list[dict]
+    characterization: str
+    utterances: list[dict]
+    stops: list[dict]
+
+
+@app.post("/api/v1/route/monologue", response_model=MonologueResponse)
+async def route_monologue(
+    body: MonologueRequest,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Generate (or return cached) the companion monologue for a route
+    + vibe combination.
+
+    Cached per (polyline_hash, vibe_hash). First user pays the LLM
+    cost (~$0.05-0.07); every subsequent user on the same route+vibe
+    is free. See docs/companion-monologue-v1-plan.md.
+
+    Slice A scope: monologue authoring + caching only. Audio synthesis
+    (slice B) and stop verification (slice C) layer on top later.
+    """
+    from app.services.monologue_pipeline import generate_monologue
+
+    # Resolve polyline + label + vibe from trip_id or inline payload.
+    if body.trip_id:
+        trip = await Trip.get(body.trip_id)
+        if trip is None or trip.user_id != user.id:
+            raise HTTPException(status_code=404, detail="Trip not found")
+        if not trip.polyline:
+            raise HTTPException(
+                status_code=400,
+                detail="Trip has no polyline yet; wait for prewarm to finish",
+            )
+        polyline = trip.polyline
+        route_label = (
+            f"{trip.origin_name} -> {trip.destination_name}"
+        )
+        themes = body.narration_themes or trip.narration_themes
+        interests = body.stop_interests or trip.stop_interests
+    else:
+        if not body.polyline or not body.route_label:
+            raise HTTPException(
+                status_code=400,
+                detail="Provide either trip_id or (polyline + route_label)",
+            )
+        polyline = body.polyline
+        route_label = body.route_label
+        themes = body.narration_themes or ["history"]
+        interests = body.stop_interests or []
+
+    doc = await generate_monologue(
+        polyline=polyline,
+        route_label=route_label,
+        narration_themes=themes,
+        stop_interests=interests,
+    )
+    if doc is None:
+        raise HTTPException(
+            status_code=502,
+            detail="Monologue generation failed (no towns extracted or LLM error)",
+        )
+
+    return MonologueResponse(
+        polyline_hash=doc.polyline_hash,
+        vibe_hash=doc.vibe_hash,
+        narration_themes=doc.narration_themes,
+        stop_interests=doc.stop_interests,
+        towns=doc.towns,
+        characterization=doc.characterization,
+        utterances=doc.utterances,
+        stops=doc.stops,
+    )
 
 
 class GeocodeCandidate(BaseModel):

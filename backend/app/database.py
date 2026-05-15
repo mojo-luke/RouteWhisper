@@ -7,7 +7,7 @@ Hybrid Database configuration for RouteWhisper
 
 import os
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Literal
 
 # PostgreSQL imports
 from sqlalchemy import Column, Integer, String, Float, Text, DateTime, Boolean, ForeignKey, create_engine
@@ -17,6 +17,7 @@ from sqlalchemy.orm import relationship, sessionmaker
 # MongoDB imports
 from motor.motor_asyncio import AsyncIOMotorClient
 from beanie import Document, init_beanie
+from pydantic import BaseModel, Field
 import pymongo
 
 # Redis imports
@@ -409,6 +410,15 @@ class Trip(Document):
     # resolve to a route, or when computing failed temporarily.
     polyline: Optional[str] = None
 
+    # Monologue v1 — see docs/companion-monologue-v1-plan.md.
+    # Two dimensions of trip vibe: narration_themes shape what the
+    # companion talks about; stop_interests shape what gets surfaced
+    # as a "pull off here" card. Both are optional and independent —
+    # a user can pick history-only narration with no stops, or a
+    # neutral default narration with several stop interests, or both.
+    narration_themes: list[str] = Field(default_factory=lambda: ["history"])
+    stop_interests: list[dict] = []
+
     created_at: datetime = datetime.utcnow()
     updated_at: datetime = datetime.utcnow()
 
@@ -417,6 +427,64 @@ class Trip(Document):
         indexes = [
             "user_id",
             [("user_id", 1), ("updated_at", -1)],  # list-most-recent query
+        ]
+
+
+# =============================================================================
+# Monologue v1 — Companion-mode narration track
+# =============================================================================
+
+# Allowed values are pinned tight in v1; expansion is a v1.5 decision.
+NarrationTheme = Literal["history", "landscape", "food_culture", "quirky"]
+StopCategory = Literal["food", "entertainment", "attractions", "shopping"]
+
+
+class StopInterest(BaseModel):
+    """A single user-declared interest in stops along the route.
+
+    Two-part shape per docs/companion-monologue-v1-plan.md:
+      - category: which of the four curated buckets
+      - detail: optional free-text qualifier ("Mexican, hole-in-the-wall",
+        "live music venues", "antique stores"). Empty string means
+        "any stop in this category."
+
+    Stored as a sub-document inside Trip.stop_interests. Not its own
+    collection because there's no cross-trip relationship to query.
+    """
+    category: StopCategory
+    detail: str = ""
+
+
+class RouteMonologue(Document):
+    """Pre-authored monologue track for a route+vibe combination.
+
+    Generated once at trip-save (or vibe-change) and cached globally —
+    the artifact is keyed by (polyline_hash, vibe_hash) so two users
+    on the same SF->Tahoe with the same vibes get the same monologue,
+    paying the LLM cost only once.
+
+    The vibe_hash is a stable sha256 over the canonical-form vibe
+    object (sorted narration_themes + canonicalized stop_interests).
+    See monologue_pipeline.canonicalize_vibe.
+
+    Volatile data (per-stop business_status, current_opening_hours)
+    is NOT stored here; it's fetched fresh at trip-start time. The
+    monologue itself is stable.
+    """
+    polyline_hash: str
+    vibe_hash: str
+    narration_themes: list[str]
+    stop_interests: list[dict]  # canonicalized StopInterest dicts
+    towns: list[dict]  # [{name, lat, lng}] in along-route order
+    characterization: str  # ~500-word route prose from stage 2
+    utterances: list[dict]  # [{i, anchor, utterance, audio_url?}]
+    stops: list[dict]  # verified, on-route stops with tied_to_utterance
+    created_at: datetime = datetime.utcnow()
+
+    class Settings:
+        name = "route_monologues"
+        indexes = [
+            [("polyline_hash", 1), ("vibe_hash", 1)],
         ]
 
 
@@ -456,6 +524,7 @@ async def init_mongodb():
             Trip,
             NarrationInteraction,
             SavedFact,
+            RouteMonologue,
         ],
     )
 
