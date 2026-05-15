@@ -67,12 +67,15 @@ android {
 }
 
 dependencies {
-  // Mapbox Navigation SDK for NDK 27
-  implementation "com.mapbox.navigationcore:android-ndk27:3.18.0-beta.1"
-  implementation "com.mapbox.navigationcore:ui-components-ndk27:3.18.0-beta.1"
-  implementation "com.mapbox.navigationcore:ui-maps-ndk27:3.18.0-beta.1"
-  implementation "com.mapbox.navigationcore:tripdata-ndk27:3.18.0-beta.1"
-  implementation "com.mapbox.navigationcore:voice-ndk27:3.18.0-beta.1"
+  // Mapbox Navigation SDK for NDK 27. Pinned to stable 3.23.x so it
+  // shares the same mapbox-common 24.23.x ABI as mapbox_maps_flutter
+  // 2.23.1 — keeping these aligned avoids the libcommon.so symbol
+  // mismatch crash on MapboxNavigation init.
+  implementation "com.mapbox.navigationcore:android-ndk27:3.23.1"
+  implementation "com.mapbox.navigationcore:ui-components-ndk27:3.23.1"
+  implementation "com.mapbox.navigationcore:ui-maps-ndk27:3.23.1"
+  implementation "com.mapbox.navigationcore:tripdata-ndk27:3.23.1"
+  implementation "com.mapbox.navigationcore:voice-ndk27:3.23.1"
 
   // AndroidX dependencies
   implementation "androidx.appcompat:appcompat:1.6.1"

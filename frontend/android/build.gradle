@@ -21,22 +21,11 @@ buildscript {
     }
 }
 
-allprojects {
-    repositories {
-        google()
-        mavenCentral()
-        maven {
-            url 'https://api.mapbox.com/downloads/v2/releases/maven'
-            authentication {
-                basic(BasicAuthentication)
-            }
-            credentials {
-                username = 'mapbox'
-                password = project.hasProperty('MAPBOX_DOWNLOADS_TOKEN') ? MAPBOX_DOWNLOADS_TOKEN : ""
-            }
-        }
-    }
-}
+// Repository config lives in settings.gradle's
+// dependencyResolutionManagement (required by AGP 8.x for artifact-
+// transform workers to see auth'd repos). RepositoriesMode set to
+// FAIL_ON_PROJECT_REPOS there, so project-level `allprojects {
+// repositories }` would error.
 
 rootProject.buildDir = '../build'
 subprojects {

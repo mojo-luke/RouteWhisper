@@ -23,4 +23,37 @@ plugins {
     id "org.jetbrains.kotlin.android" version "1.8.10" apply false
 }
 
+// Mapbox docs require the Mapbox maven repo to be declared inside
+// `dependencyResolutionManagement`, NOT in `allprojects { repositories }`.
+// AGP 8.x's artifact-transform workers only see repositories declared
+// here — putting it in allprojects leaves transforms with no creds,
+// which is why .pom fetches succeeded but .aar fetches got 401.
+// Also uses providers.gradleProperty(...).get() per docs.
+dependencyResolutionManagement {
+    // PREFER_SETTINGS instead of FAIL_ON_PROJECT_REPOS — the Flutter
+    // gradle plugin adds its own maven repo at project level, which
+    // would fail under FAIL_ON_PROJECT_REPOS. PREFER_SETTINGS still
+    // means our auth'd Mapbox repo wins.
+    repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)
+    repositories {
+        google()
+        mavenCentral()
+        // Flutter ships its embedding AARs (io.flutter:*) from its
+        // own bucket. Flutter's gradle plugin normally adds this as
+        // a project-level repo, but PREFER_SETTINGS overrides it —
+        // so we declare it here too.
+        maven { url = uri("https://storage.googleapis.com/download.flutter.io") }
+        maven {
+            url = uri("https://api.mapbox.com/downloads/v2/releases/maven")
+            authentication {
+                basic(BasicAuthentication)
+            }
+            credentials {
+                username = "mapbox"
+                password = providers.gradleProperty("MAPBOX_DOWNLOADS_TOKEN").get()
+            }
+        }
+    }
+}
+
 include ":app"
