@@ -683,6 +683,7 @@ async def _compute_and_prewarm_trip(trip: Trip, interests: list[dict]) -> None:
     """
     from app.services.mapbox_directions import fetch_polyline
     from app.services.fact_prep import fire_and_forget_prepare_polyline
+    from app.services.monologue_pipeline import fire_and_forget_generate_monologue
 
     polyline = await fetch_polyline(
         trip.origin_lat, trip.origin_lng,
@@ -695,6 +696,17 @@ async def _compute_and_prewarm_trip(trip: Trip, interests: list[dict]) -> None:
     fire_and_forget_prepare_polyline(
         polyline,
         user_interests=interests,
+        label=f"trip={trip.id}",
+    )
+    # Slice F polish: warm the monologue cache too so the device hits
+    # a ready artifact at trip-start instead of waiting on LLM
+    # authoring + TTS synthesis (~30-40s the first time per route+vibe).
+    # Cache hit if (polyline, vibe) was already generated.
+    fire_and_forget_generate_monologue(
+        polyline=polyline,
+        route_label=f"{trip.origin_name} -> {trip.destination_name}",
+        narration_themes=trip.narration_themes,
+        stop_interests=trip.stop_interests,
         label=f"trip={trip.id}",
     )
 
@@ -793,6 +805,20 @@ async def update_trip(
     trip.pins = payload.pins
     trip.days = payload.days
     trip.notes = payload.notes
+    # Track vibe changes BEFORE overwriting so we can decide whether
+    # to regenerate the monologue without doing the full Directions
+    # recompute (which only matters when origin/destination shift).
+    prior_themes = sorted(trip.narration_themes)
+    prior_interests = sorted(
+        [(i.get("category", ""), i.get("detail", "")) for i in trip.stop_interests]
+    )
+    new_themes = sorted(payload.narration_themes or ["history"])
+    new_interests = sorted(
+        [(i.get("category", ""), i.get("detail", "")) for i in (payload.stop_interests or [])]
+    )
+    vibe_changed = (
+        prior_themes != new_themes or prior_interests != new_interests
+    )
     trip.narration_themes = payload.narration_themes or ["history"]
     trip.stop_interests = payload.stop_interests or []
     # Track whether origin/destination changed; if so, the prior
@@ -814,6 +840,19 @@ async def update_trip(
             await _compute_and_prewarm_trip(trip, interests)
         except Exception as e:
             logger.warning("trip prewarm failed on update: %s", e)
+    elif vibe_changed and trip.polyline:
+        # Polyline unchanged but the user picked different vibes —
+        # warm the new (polyline, vibe) cache key so the device finds
+        # the regenerated monologue ready at trip-start. Cheap and
+        # non-blocking.
+        from app.services.monologue_pipeline import fire_and_forget_generate_monologue
+        fire_and_forget_generate_monologue(
+            polyline=trip.polyline,
+            route_label=f"{trip.origin_name} -> {trip.destination_name}",
+            narration_themes=trip.narration_themes,
+            stop_interests=trip.stop_interests,
+            label=f"trip={trip.id} vibe-change",
+        )
     return _trip_to_payload(trip)
 
 

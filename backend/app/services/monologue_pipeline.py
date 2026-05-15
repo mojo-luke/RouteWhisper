@@ -249,6 +249,50 @@ async def generate_monologue(
     return doc
 
 
+# -------- Fire-and-forget wrapper for trip-save prewarm -------------
+
+def fire_and_forget_generate_monologue(
+    polyline: str,
+    route_label: str,
+    narration_themes: list[str],
+    stop_interests: list[dict],
+    *,
+    label: str = "",
+) -> None:
+    """Kick off generate_monologue as a background task. Use from
+    trip-create / trip-update endpoints to warm the cache so the
+    device hits a ready artifact at trip-start instead of waiting
+    30+ seconds for the LLM authoring + TTS synthesis.
+
+    Idempotent in spirit (cache hit on repeat). Errors are logged
+    and swallowed — narration is not load-bearing for the trip
+    itself.
+
+    `label` shows up in logs to disambiguate concurrent prewarms
+    (e.g., "trip=abc" vs "trip=xyz").
+    """
+    async def _run():
+        try:
+            doc = await generate_monologue(
+                polyline=polyline,
+                route_label=route_label,
+                narration_themes=narration_themes,
+                stop_interests=stop_interests,
+            )
+            if doc:
+                logger.info(
+                    "monologue_pipeline: prewarmed monologue (%s) "
+                    "utt=%d stops=%d",
+                    label, len(doc.utterances), len(doc.stops),
+                )
+            else:
+                logger.info("monologue_pipeline: prewarm produced nothing (%s)", label)
+        except Exception as e:
+            logger.warning("monologue_pipeline: prewarm failed (%s): %r", label, e)
+
+    asyncio.create_task(_run())
+
+
 # -------- Cache-key helpers -----------------------------------------
 
 def polyline_hash(polyline: str) -> str:
