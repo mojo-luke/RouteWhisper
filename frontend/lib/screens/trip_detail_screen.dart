@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/trip.dart';
 import '../services/trip_service.dart';
+import 'trip_canvas_screen.dart';
 
 /// Single-trip detail. Slice A landed read-only; this slice makes the
 /// secondary fields editable in place (name, dates, arrival time, daily
@@ -181,6 +182,15 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
         appBar: AppBar(
           title: const Text('Trip'),
           actions: [
+            IconButton(
+              icon: const Icon(Icons.map_outlined),
+              tooltip: 'View on map',
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => TripCanvasScreen(trip: _trip),
+                ),
+              ),
+            ),
             IconButton(
               icon: const Icon(Icons.delete_outline),
               tooltip: 'Delete trip',

@@ -36,7 +36,11 @@ dependencies:
   provider: ^6.1.2  # State management for reactive UI updates
   supabase_flutter: ^2.12.4
   google_sign_in: ^7.2.0
-  # mapbox_maps_flutter: ^2.3.0  # Commented out - using native Android Navigation SDK instead
+  # Flutter-side Mapbox SDK for the trip-planning canvas (slice C).
+  # Distinct from the native Android Navigation SDK used in MapActivity
+  # for turn-by-turn — that's mapbox-navigation-android in build.gradle.
+  # This one renders a non-navigation preview map embedded in Flutter.
+  mapbox_maps_flutter: ^2.3.0
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
 

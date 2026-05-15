@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'screens/navigation_dashboard.dart';
@@ -16,6 +17,15 @@ final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 const _supabaseUrl = String.fromEnvironment('SUPABASE_URL');
 const _supabaseAnonKey = String.fromEnvironment('SUPABASE_ANON_KEY');
 
+// Mapbox pk. token — public-facing by design (the same one shipped in
+// android/app/src/main/res/values/mapbox_access_token.xml for the
+// native Navigation SDK). pk. tokens are intended for embedding in
+// client apps; the "sk." secret tokens are the ones that stay on
+// the server. Keeping a const here is fine for v1; longer-term we
+// could move to --dart-define for the same hygiene as Supabase.
+const _mapboxAccessToken =
+    '***REMOVED-SECRET***';
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   if (_supabaseUrl.isEmpty || _supabaseAnonKey.isEmpty) {
@@ -25,6 +35,11 @@ Future<void> main() async {
     );
   }
   await Supabase.initialize(url: _supabaseUrl, anonKey: _supabaseAnonKey);
+  // Initialize the Flutter-side Mapbox SDK for the trip-planning
+  // canvas. Must run before any MapWidget is built. Native nav uses
+  // its own SDK with the same token via an Android resource, so this
+  // call doesn't affect anything in MapActivity.
+  MapboxOptions.setAccessToken(_mapboxAccessToken);
   runApp(const MyApp());
 }
 

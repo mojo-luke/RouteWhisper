@@ -37,6 +37,12 @@ class Trip {
 
   final String? notes;
 
+  /// Mapbox precision-6 encoded polyline of the driving route. Server
+  /// computes it at trip-create via Mapbox Directions and persists it
+  /// so the canvas can render the route without re-asking the network.
+  /// Null on legacy trips created before this field existed.
+  final String? polyline;
+
   /// ISO-8601 timestamps from the server. Local-only drafts leave both null.
   final DateTime? createdAt;
   final DateTime? updatedAt;
@@ -58,6 +64,7 @@ class Trip {
     this.pins = const [],
     this.days = const [],
     this.notes,
+    this.polyline,
     this.createdAt,
     this.updatedAt,
   });
@@ -82,6 +89,7 @@ class Trip {
         days: ((json['days'] as List?) ?? const [])
             .cast<Map<String, dynamic>>(),
         notes: json['notes'] as String?,
+        polyline: json['polyline'] as String?,
         createdAt: json['created_at'] != null
             ? DateTime.tryParse(json['created_at'] as String)
             : null,
@@ -110,6 +118,9 @@ class Trip {
         'pins': pins,
         'days': days,
         'notes': notes,
+        // Server overrides on save when origin/destination change; we
+        // include it here so a no-op PUT preserves the value.
+        if (polyline != null) 'polyline': polyline,
       };
 
   Trip copyWith({
