@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
@@ -151,6 +152,29 @@ class NarrationService extends ChangeNotifier {
   /// Surfaced so tests can tighten this for deterministic GPS frames.
   double townEntryRadiusMiles = 3.0;
 
+  /// How long a monologue utterance stays visible after firing. ~13s
+  /// of speech + ~7s padding so a passenger can finish reading the
+  /// text after the audio finishes. Surfaced for tests to drop to
+  /// near-zero for deterministic assertion frames.
+  Duration monologueCardDuration = const Duration(seconds: 20);
+
+  /// Currently-visible monologue utterance, or null when no monologue
+  /// is on screen. The MonologueCard widget watches this; auto-clears
+  /// after `monologueCardDuration` since the utterance fired.
+  MonologueUtterance? _currentMonologueUtterance;
+  MonologueUtterance? get currentMonologueUtterance =>
+      _currentMonologueUtterance;
+  Timer? _monologueClearTimer;
+
+  /// User-initiated dismiss of the monologue card. The audio keeps
+  /// playing (already handed off to the native side); we just hide
+  /// the visual.
+  void dismissMonologueCard() {
+    _monologueClearTimer?.cancel();
+    _currentMonologueUtterance = null;
+    notifyListeners();
+  }
+
   /// Kick off a trip's narration by fetching facts for the encoded
   /// polyline. Idempotent for the same polyline; calling again with
   /// a different polyline replaces the queue.
@@ -219,6 +243,8 @@ class NarrationService extends ChangeNotifier {
     _queue = const [];
     _monologueQueue = const [];
     _townCentroids.clear();
+    _monologueClearTimer?.cancel();
+    _currentMonologueUtterance = null;
     _active = null;
     _followUpIndex = 0;
     _lastSpokeAt = null;
@@ -365,6 +391,15 @@ class NarrationService extends ChangeNotifier {
     if (narrationMode != 'tap_to_hear') {
       _speak(utt.text, utt.audioUrl);
     }
+    // Surface the utterance on the dashboard for ~20s. Listeners
+    // (MonologueCard) rebuild on the notifyListeners() call.
+    _currentMonologueUtterance = utt;
+    _monologueClearTimer?.cancel();
+    _monologueClearTimer = Timer(monologueCardDuration, () {
+      _currentMonologueUtterance = null;
+      notifyListeners();
+    });
+    notifyListeners();
     return true;
   }
 

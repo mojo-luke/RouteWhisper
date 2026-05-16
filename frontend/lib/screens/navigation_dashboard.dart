@@ -8,6 +8,7 @@ import '../services/route_facts_service.dart';
 import '../services/trip_service.dart';
 import '../services/user_profile_service.dart';
 import '../widgets/budget_pill.dart';
+import '../widgets/monologue_card.dart';
 import '../widgets/narration_card.dart';
 import '../widgets/route_input_dialog.dart';
 import '../widgets/poi_dashboard.dart';
@@ -193,6 +194,12 @@ class _NavigationDashboardState extends State<NavigationDashboard> {
               // Renders an empty SizedBox when there's no active narration,
               // so the layout doesn't jump when one arrives.
               const NarrationCard(),
+
+              // Monologue v1: visible when a town-anchored utterance just
+              // fired. Auto-dismisses after ~20s (per the service's clear
+              // timer); manual close also supported. Empty SizedBox when
+              // no monologue is active.
+              const MonologueCard(),
 
               const SizedBox(height: 16),
 

@@ -412,6 +412,49 @@ void main() {
     expect(bridge.callsTo('playNarrationAudio'), hasLength(2));
   });
 
+  test('monologue: firing sets currentMonologueUtterance + auto-clears',
+      () async {
+    final service = NarrationService(
+      bridge: bridge,
+      fetcher: (_) async => const [],
+      monologueFetcher: (_) async => _twoTownMonologue(),
+      now: () => fakeNow,
+    );
+    // Tight clear window so the test doesn't hang waiting on a real
+    // 20s timer.
+    service.monologueCardDuration = const Duration(milliseconds: 50);
+    await service.startTrip('p', tripId: 'trip-1');
+    expect(service.currentMonologueUtterance, isNull);
+    service.onLocationUpdate(
+      latitude: 37.7749, longitude: -122.4194, speedMph: 30.0,
+    );
+    expect(service.currentMonologueUtterance, isNotNull);
+    expect(service.currentMonologueUtterance!.anchor, 'San Francisco');
+    // Wait long enough for the auto-clear timer to fire.
+    await Future<void>.delayed(const Duration(milliseconds: 80));
+    expect(service.currentMonologueUtterance, isNull);
+  });
+
+  test('monologue: dismissMonologueCard hides immediately, audio stays',
+      () async {
+    final service = NarrationService(
+      bridge: bridge,
+      fetcher: (_) async => const [],
+      monologueFetcher: (_) async => _twoTownMonologue(),
+      now: () => fakeNow,
+    );
+    await service.startTrip('p', tripId: 'trip-1');
+    service.onLocationUpdate(
+      latitude: 37.7749, longitude: -122.4194, speedMph: 30.0,
+    );
+    expect(service.currentMonologueUtterance, isNotNull);
+    expect(bridge.callsTo('playNarrationAudio'), hasLength(1));
+    service.dismissMonologueCard();
+    expect(service.currentMonologueUtterance, isNull);
+    // Audio call count unchanged — we don't stop playback, just hide UI.
+    expect(bridge.callsTo('playNarrationAudio'), hasLength(1));
+  });
+
   test('monologue: endTrip clears queue and town centroids', () async {
     final service = NarrationService(
       bridge: bridge,
