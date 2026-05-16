@@ -1,9 +1,43 @@
 # Companion Monologue v1 — Implementation Plan
 
-**Status:** plan-of-record once approved. Lifts the spike findings in
-`docs/companion-monologue-memo.md` into a buildable v1.
+**Status:** SHIPPED as of 2026-05-16. All six slices A–F merged to main.
+Lifts the spike findings in `docs/companion-monologue-memo.md` into the
+production v1.
 
-**Date:** 2026-05-15.
+**Date:** 2026-05-15 (initial), shipped 2026-05-16.
+
+## Shipped commits
+
+| Slice | Commit | What |
+|---|---|---|
+| Research | `da3bf39` | Spike scripts + this plan + memo |
+| A | `5ee121d` | Backend authoring pipeline + endpoint |
+| A | `eaa56f8` | End-to-end verification script |
+| B | `d2fceea` | TTS pre-synthesis + audio serve endpoint |
+| C | `1accd26` | Stop verification (Mapbox + OSM Overpass) |
+| D | `e337de5` | Vibe selection UI on TripDetailScreen |
+| E | `7a5e467` | Frontend track integration (NarrationService) |
+| F | `336b5a1` | Trip-save + vibe-change prewarm |
+
+What you actually see on-device today:
+
+1. Open a saved trip → "What should the companion talk about?" chips
+   + "Stop interests" list with add/edit/remove.
+2. Save trip → backend fires both per-POI prewarm AND monologue
+   prewarm in the background. By the time the user taps Start, the
+   monologue artifact + mp3s are ready.
+3. Edit a vibe and re-save → backend detects the change, warms the
+   new `(polyline, vibe)` cache key. No re-Directions call.
+4. Drive the trip → as GPS enters each town along the route, the
+   companion speaks the next anchored utterance via the existing
+   audio pipeline. Per-POI Wikipedia narration also fires for
+   nearby POIs. Both tracks share the existing 30s spacing rule.
+
+Section below is the original plan; left in place as the canonical
+architectural description (what's built, why it's built that way,
+and the decisions baked in along the way).
+
+---
 
 ## What ships in v1
 

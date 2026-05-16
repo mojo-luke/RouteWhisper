@@ -1,85 +1,167 @@
 # Development Roadmap
 
-**Last updated:** 2026-05-06
+**Last updated:** 2026-05-16
 
-This is the single source of truth for what's done. When in doubt, trust git over any other doc.
+Single source of truth for what's done. When in doubt, trust git over any
+other doc.
 
-A note on numbering: commits sometimes used different step numbers than this doc (e.g., waypoint work was tagged "Step 5" in commits but is "Step 4.5" here; "Step 3.5" was added retroactively after POI-during-nav work landed). The numbering below is the canonical version going forward.
-
----
-
-## Phase 1: Core application
-
-### ✅ Step 1: Project setup & architecture
-Flutter project + FastAPI backend + dev environment + database schema. Done.
-
-### ✅ Step 2: Basic navigation foundation
-Mapbox Navigation SDK integrated, route calc, location tracking, turn-by-turn UI, navigation camera, voice guidance, trip progress display. Commits `f56c701`, `381d9ab`, `e1f3f14`.
-
-### ✅ Step 2.5: Native Mapbox navigation activity
-`MapActivity` with Mapbox NavigationView, Flutter ↔ native method channel for launching it, shared `FlutterEngine` for state preservation. Commits `2a824a8`, `3e1926f`, `c959d72`.
-
-### ✅ Step 3: POI data pipeline
-Mapbox Search API integration (15 categories), `POST /api/v1/route/pois`, route corridor extraction (5-mile buffer), POI ranking, Redis caching with 1-hour TTL. Commit `5e8f4cf`.
-
-### ✅ Step 3.5: POI discovery during active navigation
-"Find Stops" FAB on `MapActivity`, opens POI modal via `TransparentFlutterActivity`, adding a POI updates the route in-place without leaving navigation. Commit `c959d72`.
-
-### ❌ Step 4: Core narration system
-**Headline feature, not started.** TTS integration, fact delivery timing, fact-ranking algorithm, audio queue management. The app's name is "RouteWhisper" — this is the product thesis.
-
-### ✅ Step 4.5: Waypoint management
-Add/remove/reorder waypoints, status tracking (pending/active/completed/skipped), stop duration tracking, arrival/departure detection (>50m AND >5mph), live waypoint progress card on `MapActivity`. Commits `58a2261`, `9b4183a`. *(Numbered "Step 5" in those commits.)*
-
-### ❌ Step 5: Hierarchical POI strategy
-Trip distance detection (long/regional/local), POI filtering by trip scale.
-
-### ❌ Step 6: Time budget system
-User-set time flexibility, suggestion filtering by time constraints, dynamic adjustment.
-
-### ❌ Step 7: Road trip stop recommendations
-Beyond the existing POI search — interest profiling, stop categorization (food/shopping/outdoor/etc.).
-
-### ❌ Step 8: Essential travel services
-Gas stations (GasBuddy), restroom finder, fuel level monitoring.
-
-### ❌ Step 9: Buddy mode
-Driver/passenger UI split, real-time route sync between devices.
-
-### ❌ Step 10: Multi-day trip planning
-Trip segmentation, hotel API integration, day-by-day itineraries.
-
-### ❌ Step 11: UX & polish
-Onboarding, preferences, trip history, performance/battery.
-
-### ❌ Step 12: Testing & QA
-Real-world drive tests, performance optimization, UAT.
+A note on numbering: the old step list (Steps 1–16) made sense before the
+product reframe around the *companion*. The new structure below mirrors how
+work actually shipped — by feature surface, not by sequential step. Step
+numbers are preserved as labels where the work matches, but they're no
+longer load-bearing.
 
 ---
 
-## Phase 2: Vehicle integration
+## Shipped
 
-### ❌ Steps 13–15: CarPlay, Android Auto, polish
+### Foundation
+- ✅ **Flutter + FastAPI + Mapbox stack**, dev environment, hybrid DB
+  (Postgres + MongoDB + Redis), Docker for backend services.
+- ✅ **Mapbox Navigation SDK integration** with turn-by-turn UI, route
+  calc, voice guidance, native `MapActivity`, shared `FlutterEngine`,
+  Flutter↔native method channel.
+- ✅ **Mapbox SDK on stable `3.23.1`** (was `3.18.0-beta.1`) — paired with
+  Maps `11.23.x` for the Flutter canvas. ABI conflict fix in commit
+  `ef4116a` after the gradle/`dependencyResolutionManagement` debug.
+- ✅ **Provider state management migration**, shared `FlutterEngine` to
+  preserve state across activity boundaries.
+
+### POI pipeline
+- ✅ **POI data pipeline** — Mapbox Search API (15 categories), corridor
+  extraction (5mi buffer), ranking, Redis caching. *(Step 3 in the old
+  numbering.)*
+- ✅ **POI discovery during active navigation** — "Find Stops" FAB,
+  modal via `TransparentFlutterActivity`, in-place route update.
+  *(Step 3.5.)*
+- ✅ **Waypoint management** — add/remove/reorder, status tracking,
+  arrival/departure detection, live progress card. *(Step 4.5.)*
+- ✅ **Trip-scale detection** (`detect_trip_scale` in `polyline.py`) +
+  per-kind distance filters in `fact_ranker`. *(Part of Step 5.)*
+
+### Headline feature: the Whisper (Step 4) — SHIPPED
+The product thesis: a companion that narrates interesting things about
+what you're driving past. Two complementary tracks now in production:
+
+- ✅ **Per-POI narration** — Wikipedia GeoSearch along the polyline,
+  Claude Haiku summarization, OpenAI TTS pre-synthesis, on-device GPS
+  triggers with 30s spacing, "Take me there" mid-nav re-routing, native
+  banner inside `MapActivity`, narration markers + pulse animations.
+- ✅ **Drive monologue** (v1 — see `docs/companion-monologue-v1-plan.md`)
+  — LLM-authored sequence of utterances anchored to towns along the
+  route, vibe-driven (history / landscape / food culture / quirky),
+  verified stops surfaced for opt-in stop interests, audio pre-synthesized
+  at trip-save time, plays in parallel with per-POI narration.
+  Commits: `5ee121d` / `eaa56f8` / `d2fceea` / `1accd26` / `e337de5` /
+  `7a5e467` / `336b5a1`.
+
+### Trip planning (slice-A through slice-C)
+- ✅ **Trip CRUD** — Beanie document, REST endpoints, Flutter model,
+  MyTripsScreen, editable TripDetailScreen. *(Trip-planning brief
+  slices A + B.)*
+- ✅ **New trip wizard** with origin/destination Mapbox geocoding.
+- ✅ **Trip canvas v1** — Flutter `mapbox_maps_flutter` map showing
+  the route polyline + origin/destination pins. The canvas is a viewer
+  in v1; typed pins / day strip / NL textbox are deferred. *(Trip-
+  planning brief slice C v1.)*
+- ✅ **Companion vibe UI on TripDetailScreen** — multi-select theme
+  chips + add-stop-interest list. Vibe changes regenerate the monologue
+  on save (cache hit if unchanged).
+
+### Feedback + memory
+- ✅ **Discoveries timeline** — server-side aggregation of `played` /
+  `visited` / `saved` events per user, screen + dashboard entry.
+- ✅ **Save / dismiss / tell-me-more / replay** events recorded for
+  Phase 3 personalization.
+- ✅ **Take-me-there** as the closed-loop "user actually went here"
+  signal.
+- ✅ **Narration mode preference** — Auto / Tap-to-hear / Off, plus
+  the option to disable Mapbox turn-by-turn voice.
+
+### Recommendations engine (Step 7 ancestor)
+- ✅ **Four-dimensional scorer** (`stop_recommendations.py`),
+  `EngineRequest` shape, `UserProfile.interests` curated + free-text
+  inputs, PreferencesScreen.
 
 ---
 
-## Phase 3: Future enhancements
+## Active / next
 
-### ❌ Step 16: Advanced features
-Weather, EV charging, community content, monetization, analytics.
+Nothing in flight as of 2026-05-16. The monologue v1 was the last
+focused effort; we're at a clean checkpoint.
+
+Highest-leverage candidates for the next slice, in rough order of
+product value:
+
+1. **On-device E2E of monologue v1** — simulated drive on the emulator
+   to confirm cadence, audio quality, and the new-vibe regeneration
+   flow feel right. The pieces are individually green; the integrated
+   experience hasn't been driven end-to-end yet.
+2. **Yield tuning for verified stops** — Slice C produced 1 verified
+   stop out of N proposed on the SF→Tahoe test. Loosen the on-route
+   distance threshold, refine name-match heuristics, possibly raise
+   the LLM's `stops_per_interest` cap.
+3. **Trip-start business-status refresh** — re-verify each stop's
+   `business_status` + current opening hours at drive-time so we
+   never surface a "permanently closed" stop to the user. Skipped
+   in v1 because it's only meaningful at trip-start.
+4. **Visible monologue UX** — currently audio-only. A minimal
+   inline indicator ("Companion: speaking @ Davis") would let users
+   know the track is active without needing a full card. Cheap.
+5. **Polygon-aware region triggers** — replace the proximity-to-
+   centroid check with Mapbox Boundaries / Tilequery containment.
+   See memory: `region_polygons_via_mapbox.md`. Cleaner semantics
+   for big-area firing rules.
+6. **Voice talkback (STT)** — natural driving-context way to react
+   to whispers ("save that", "tell me more"). Push-to-talk + ~6
+   commands. See memory: `voice_talkback.md`.
+7. **Multi-day trip handling** — single polyline per monologue
+   today; multi-day routes should generate per-day monologues or
+   one long arc. See trip-planning brief.
 
 ---
 
-## Infrastructure (not on the step list, but done)
+## Deferred / parked
 
-- ✅ Provider state management migration (commits `691872e`, `d16d76e`)
-- ✅ Docker support for backend services (commit `4f84d1c`)
-- ✅ Local Mapbox docs library at `docs/mapbox/` (21 reference files)
+Real ideas with explicit owners that are not next:
+
+- **Lodging integration** — explicitly deferred until we have a
+  partnership (Booking.com / Amadeus / a real provider). Affiliate-
+  link spam would undermine trust. Memory: nothing yet.
+- **Buddy mode / passenger pairing** — pair a passenger's phone to
+  the driver's trip so whispers can deepen with photos + Wikipedia
+  links on their side, eyes-on-road on the driver's. Memory:
+  `passenger_buddy_idea.md`.
+- **iOS port** — Android-first until the companion has earned its
+  keep here.
+- **Step 8: Essential travel services** (gas / restrooms / EV) —
+  not novel enough to be the next thing; layer in alongside the
+  stop verifier when we expand stop categories.
+- **Phase 2: CarPlay / Android Auto** — premature until we have a
+  product worth integrating.
+- **Phase 3: Weather, EV charging, monetization, analytics** —
+  v2+ concerns.
 
 ---
 
 ## Honest status summary
 
-- **Done:** Steps 1, 2, 2.5, 3, 3.5, 4.5 = 6 of 19 (~32%) — but several of these were unplanned additions, so the original roadmap is ~5/17 (~29%).
-- **Headline feature unbuilt:** Step 4 (TTS narration). Time has gone into infrastructure (waypoints, POI plumbing, Provider migration, the Flutter↔native engine fix) rather than the product thesis.
-- **Phase 2 and 3 should not be planned in detail until Phase 1 has the narration feature working** — without it, this is a generic Mapbox nav wrapper.
+- **Headline feature: shipped.** Both per-POI narration *and* the
+  authored drive monologue are running. The product thesis is now
+  load-bearing in code, not aspirational.
+- **Trip planning surface: v1 viewer + vibe controls.** The canvas
+  is a map view, not a full planner. Typed pins / day strip / NL
+  textbox are real ideas that haven't been built.
+- **Recommendations + Discoveries: shipped as supporting surfaces.**
+  They feed the companion rather than standing on their own.
+- **No active work in flight.** Clean checkpoint to either polish
+  the monologue UX, expand the canvas, or open the next product
+  thread.
+
+## Infrastructure (not on the main list)
+
+- ✅ Docker Compose stack (Postgres + MongoDB + Redis + backend)
+- ✅ Local Mapbox docs library at `docs/mapbox/` (21 files)
+- ✅ Auto-memory system at `~/.claude/projects/.../memory/`
+- ✅ Companion-monologue spike scripts at `backend/scripts/spike_*.py`
+- ✅ Per-slice verification scripts at `backend/scripts/verify_slice_*.py`

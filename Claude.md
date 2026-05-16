@@ -57,6 +57,6 @@ flutter build apk --debug && adb install -r build/app/outputs/flutter-apk/app-de
 
 ## Process notes
 
-- **Status source:** `Development-Roadmap.md` is the single source for what's done. Step numbering in some commits drifted from the roadmap (e.g., waypoint work landed under "Step 5" in commits but appears as "Step 4.5" in the roadmap; "Step 3.5" was added retroactively). When in doubt, trust git over older docs.
-- **Commits:** conventional format (`feat(Step N): ...`, `fix:`, `docs:`), one feature per commit.
-- **Headline feature still unbuilt:** Step 4 (TTS narration of facts about places) hasn't started. The app's name is "RouteWhisper" — narration is the product thesis.
+- **Status source:** `Development-Roadmap.md` is the single source for what's done. The old Step-N numbering became misleading after the product reframe around the companion — work now ships by feature surface (per-POI narration, drive monologue, trip CRUD, canvas, etc.) and the roadmap is organized accordingly. When in doubt, trust git over older docs.
+- **Commits:** conventional format (`feat(Step N): ...` for legacy work, `feat(monologue): Slice X — ...` for the monologue v1 stack, also `fix:`, `docs:`, `research:`), one feature per commit.
+- **Headline feature: shipped.** Both per-POI Wikipedia narration *and* the authored drive monologue (v1, slices A–F) run on the device. The app's name is "RouteWhisper" — narration is the product thesis, and as of 2026-05-16 the product thesis is load-bearing in code. See `docs/companion-monologue-v1-plan.md` for the architecture and `docs/companion-monologue-memo.md` for the research that informed it.

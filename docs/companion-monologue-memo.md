@@ -1,10 +1,11 @@
 # Companion Monologue Architecture — research memo
 
-**Status:** spike findings, not a commitment. Nothing in this doc is wired into
-the product. The work is `backend/scripts/spike_*.py` only. We can discard the
-whole thing without affecting anything we ship today.
+**Status:** SUPERSEDED by `docs/companion-monologue-v1-plan.md`, which
+captures the implemented architecture. This memo is preserved as the
+research narrative — what we tried during the spike phase, what we
+learned, and what informed the decisions baked into v1.
 
-**Date:** 2026-05-15 (initial), expand on revisit.
+**Date:** 2026-05-15.
 
 ## Context
 

@@ -83,11 +83,23 @@ cd app && python main.py
 
 ## 📊 Status
 
-Phase 1 progress: ~6 of 19 steps done (~32%). See [Development-Roadmap.md](Development-Roadmap.md) for the canonical list.
+See [Development-Roadmap.md](Development-Roadmap.md) for the canonical list.
 
-Working today: turn-by-turn navigation (Mapbox), route calculation, POI discovery along route (Mapbox Search API + Redis caching), POI discovery *during* active navigation, multi-stop waypoint management with arrival/departure detection.
+**The headline feature is shipped.** Both the per-POI Wikipedia-driven
+narration and the authored drive monologue (v1, six slices A–F) are
+running. The companion speaks during the drive, anchored to facts and
+to towns; vibe controls let the user shape what it talks about.
 
-Not yet built: TTS narration of facts (Step 4 — the headline feature), trip-scale POI strategy, time-budget system, and everything in Phase 2 (CarPlay/Android Auto) and Phase 3.
+Also working today: turn-by-turn navigation (Mapbox), route calculation,
+POI discovery along route and during active navigation, multi-stop
+waypoint management, trip CRUD + new-trip wizard, trip canvas v1
+(route viewer), Discoveries timeline, narration mode preferences,
+"Take me there" mid-nav re-routing.
+
+Deferred until there's a real reason to build them: lodging integration
+(awaiting partnership), buddy mode, polygon-aware region narration, voice
+talkback (STT), multi-day trip handling, iOS port, and everything in
+Phase 2 (CarPlay / Android Auto) and Phase 3.
 
 ## 🔧 API Documentation
 
