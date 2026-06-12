@@ -71,6 +71,12 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider.value(
           value: NavigationService.recommendations,
         ),
+
+        // NarrationService — needed by MonologueCard and NarrationCard
+        // on the dashboard.
+        ChangeNotifierProvider.value(
+          value: NavigationService.narration,
+        ),
       ],
       child: MaterialApp(
         navigatorKey: navigatorKey,
