@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frontend/models/trip.dart';
+import 'package:frontend/models/trip_pin.dart';
 
 /// Locks in the JSON wire shape between Flutter `Trip` and the backend
 /// `Trip` Beanie document. Slice A: skeleton fields only — pins/days
@@ -22,7 +23,7 @@ void main() {
         'daily_drive_cap_hours': 5,
         'time_budget_mode': 'discovery',
         'pins': [
-          {'type': 'anchor', 'poi': {'name': 'Coffee'}},
+          {'type': 'anchor', 'id': 'pin-abc', 'name': 'Coffee stop', 'lat': 38.5, 'lng': -121.5},
         ],
         'days': [
           {'day_number': 1, 'drive_time_minutes': 240},
@@ -113,7 +114,7 @@ void main() {
         dailyDriveCapHours: 7,
         timeBudgetMode: 'discovery',
         pins: [
-          {'type': 'lodging', 'name': 'Eureka Inn'},
+          TripPin(type: 'lodging', id: 'pin-1', name: 'Eureka Inn', lat: 40.8, lng: -124.2),
         ],
         notes: 'Already booked Eureka',
       );
@@ -129,7 +130,7 @@ void main() {
       expect(round.dailyDriveCapHours, 7);
       expect(round.timeBudgetMode, 'discovery');
       expect(round.pins, hasLength(1));
-      expect(round.pins.first['name'], 'Eureka Inn');
+      expect(round.pins.first.name, 'Eureka Inn');
       expect(round.notes, 'Already booked Eureka');
     });
 

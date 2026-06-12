@@ -231,12 +231,19 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
           actions: [
             IconButton(
               icon: const Icon(Icons.map_outlined),
-              tooltip: 'View on map',
-              onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => TripCanvasScreen(trip: _trip),
-                ),
-              ),
+              tooltip: 'Plan on canvas',
+              onPressed: () => Navigator.of(context)
+                  .push<Trip>(MaterialPageRoute(
+                    builder: (_) => TripCanvasScreen(trip: _trip),
+                  ))
+                  .then((updated) {
+                if (updated is Trip && mounted) {
+                  setState(() {
+                    _trip = updated;
+                    _nameCtrl.text = updated.name;
+                  });
+                }
+              }),
             ),
             IconButton(
               icon: const Icon(Icons.delete_outline),

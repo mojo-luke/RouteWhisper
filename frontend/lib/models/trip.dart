@@ -1,5 +1,7 @@
 import 'package:flutter/foundation.dart';
 
+import 'trip_pin.dart';
+
 /// In-memory representation of a saved trip — mirrors the backend's
 /// `Trip` Beanie document. See docs/trip-planning-brief.md.
 ///
@@ -29,10 +31,10 @@ class Trip {
   final int dailyDriveCapHours;
   final String timeBudgetMode; // hurry | moderate | discovery
 
-  /// Canvas content (slice C+). Each entry's shape is defined inline in
-  /// the brief: `{type, poi, day_index, time_of_day}`. Stored as raw
-  /// dicts on this side until the canvas widgets need typed access.
-  final List<Map<String, dynamic>> pins;
+  /// Canvas anchor pins (slice C+). Typed as [TripPin] now that the
+  /// canvas widgets need direct field access. Backend stores as raw
+  /// JSON; toJson()/fromJson() handles the round-trip.
+  final List<TripPin> pins;
   final List<Map<String, dynamic>> days;
 
   final String? notes;
@@ -72,7 +74,7 @@ class Trip {
     this.arrivalTime,
     this.dailyDriveCapHours = 6,
     this.timeBudgetMode = 'moderate',
-    this.pins = const [],
+    this.pins = const <TripPin>[],
     this.days = const [],
     this.notes,
     this.polyline,
@@ -98,7 +100,8 @@ class Trip {
         timeBudgetMode:
             (json['time_budget_mode'] as String?) ?? 'moderate',
         pins: ((json['pins'] as List?) ?? const [])
-            .cast<Map<String, dynamic>>(),
+            .map((e) => TripPin.fromJson(e as Map<String, dynamic>))
+            .toList(),
         days: ((json['days'] as List?) ?? const [])
             .cast<Map<String, dynamic>>(),
         notes: json['notes'] as String?,
@@ -133,7 +136,7 @@ class Trip {
         'arrival_time': arrivalTime,
         'daily_drive_cap_hours': dailyDriveCapHours,
         'time_budget_mode': timeBudgetMode,
-        'pins': pins,
+        'pins': pins.map((p) => p.toJson()).toList(),
         'days': days,
         'notes': notes,
         // Server overrides on save when origin/destination change; we
@@ -157,7 +160,7 @@ class Trip {
     String? arrivalTime,
     int? dailyDriveCapHours,
     String? timeBudgetMode,
-    List<Map<String, dynamic>>? pins,
+    List<TripPin>? pins,
     List<Map<String, dynamic>>? days,
     String? notes,
     List<String>? narrationThemes,
