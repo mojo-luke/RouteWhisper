@@ -109,6 +109,34 @@ class TripService {
     }
   }
 
+  /// Submit a natural-language canvas instruction. Returns the updated pin
+  /// list and a confirmation message, or null on failure.
+  static Future<({List<Map<String, dynamic>> pins, String message})?> nlEdit(
+    String tripId,
+    String text,
+  ) async {
+    try {
+      final response = await AuthedHttp.send(
+        () => http.post(
+          Uri.parse('$_baseUrl/trips/$tripId/nl'),
+          headers: _authedJsonHeaders(),
+          body: jsonEncode({'text': text}),
+        ),
+      );
+      if (response.statusCode != 200) {
+        debugPrint('POST /trips/$tripId/nl: HTTP ${response.statusCode}');
+        return null;
+      }
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final pins = (data['pins'] as List).cast<Map<String, dynamic>>();
+      final message = data['message'] as String? ?? '';
+      return (pins: pins, message: message);
+    } catch (e) {
+      debugPrint('TripService.nlEdit failed: $e');
+      return null;
+    }
+  }
+
   static Future<bool> delete(String id) async {
     try {
       final response = await AuthedHttp.send(

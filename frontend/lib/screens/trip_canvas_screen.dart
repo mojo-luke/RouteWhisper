@@ -17,13 +17,14 @@ const _uuid = Uuid();
 /// Panel layout (top → bottom):
 ///   [TripCanvasTimeline]  — 64dp strip showing origin → stops → destination
 ///   [MapWidget]           — interactive Mapbox map (expanded)
-///   [_NLPlaceholder]      — 48dp "Tell me what to change" bar (Slice 2)
+///   [_NLInputBar]         — "Tell me what to change" text input (Slice 2)
 ///
-/// User interactions in Slice 1:
+/// User interactions:
 ///   - Tap map → name-a-stop bottom sheet → amber anchor pin added
-///   - × on timeline chip → remove pin (5-second undo SnackBar per UX rule #4)
-///   - Pins auto-saved to backend via PUT /trips/{id}
-///   - Pops updated Trip on back-nav so TripDetailScreen stays in sync
+///   - × on anchor chip → remove pin (5-second undo SnackBar per UX rule #4)
+///   - ✓ on suggested chip → promote to anchor
+///   - × on suggested chip → dismiss (5-second undo SnackBar)
+///   - NL bar → type instruction → LLM parses → canvas updates
 class TripCanvasScreen extends StatefulWidget {
   final Trip trip;
   const TripCanvasScreen({super.key, required this.trip});
@@ -110,7 +111,8 @@ class _TripCanvasScreenState extends State<TripCanvasScreen> {
     await map.flyTo(camera, MapAnimationOptions(duration: 900, startDelay: 0));
   }
 
-  /// Redraws all pins: origin (green) + destination (red) + anchors (amber).
+  /// Redraws all pins: origin (green) + destination (red) + anchors (amber)
+  /// + suggested (blue-grey).
   /// Deletes and recreates every time to keep rendering consistent with state.
   Future<void> _redrawPins() async {
     final map = _map;
@@ -146,9 +148,7 @@ class _TripCanvasScreenState extends State<TripCanvasScreen> {
       ),
       for (final pin in _pins.where((p) => p.type == 'anchor'))
         PointAnnotationOptions(
-          geometry: Point(
-            coordinates: Position(pin.lng, pin.lat),
-          ),
+          geometry: Point(coordinates: Position(pin.lng, pin.lat)),
           textField: pin.name,
           textOffset: [0.0, -1.6],
           textSize: 12.0,
@@ -156,6 +156,17 @@ class _TripCanvasScreenState extends State<TripCanvasScreen> {
           textHaloColor: 0xFF000000,
           textHaloWidth: 1.5,
           iconColor: 0xFFFFA726, // amber
+        ),
+      for (final pin in _pins.where((p) => p.type == 'suggested'))
+        PointAnnotationOptions(
+          geometry: Point(coordinates: Position(pin.lng, pin.lat)),
+          textField: pin.name,
+          textOffset: [0.0, -1.6],
+          textSize: 12.0,
+          textColor: 0xFFFFFFFF,
+          textHaloColor: 0xFF000000,
+          textHaloWidth: 1.5,
+          iconColor: 0xFF78909C, // blue-grey
         ),
     ];
 
@@ -232,6 +243,72 @@ class _TripCanvasScreenState extends State<TripCanvasScreen> {
     }
   }
 
+  // ── Promote suggested pin to anchor ───────────────────────────────
+
+  void _promotePin(TripPin pin) {
+    final promoted = pin.copyWith(type: 'anchor');
+    setState(() {
+      _pins = [
+        for (final p in _pins) if (p.id == pin.id) promoted else p,
+      ];
+    });
+    _redrawPins();
+    _scheduleSave();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${pin.name} added as a stop'),
+          duration: const Duration(seconds: 5),
+          action: SnackBarAction(
+            label: 'UNDO',
+            onPressed: () {
+              setState(() {
+                _pins = [
+                  for (final p in _pins) if (p.id == pin.id) pin else p,
+                ];
+              });
+              _redrawPins();
+              _scheduleSave();
+            },
+          ),
+        ),
+      );
+    }
+  }
+
+  // ── NL canvas edit ─────────────────────────────────────────────────
+
+  Future<void> _onNLSubmit(String text) async {
+    final tripId = _trip.id;
+    if (tripId == null) return;
+
+    final result = await TripService.nlEdit(tripId, text);
+    if (!mounted) return;
+
+    if (result == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Something went wrong. Please try again.'),
+          duration: Duration(seconds: 3),
+        ),
+      );
+      return;
+    }
+
+    final newPins = result.pins.map((raw) => TripPin.fromJson(raw)).toList();
+    setState(() => _pins = newPins);
+    await _redrawPins();
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(result.message),
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    }
+  }
+
   // ── Save / navigation ─────────────────────────────────────────────
 
   void _scheduleSave() {
@@ -299,6 +376,7 @@ class _TripCanvasScreenState extends State<TripCanvasScreen> {
                     trip: _trip,
                     pins: _pins,
                     onRemovePin: _removePin,
+                    onPromotePin: _promotePin,
                   ),
                   Expanded(
                     child: MapWidget(
@@ -318,7 +396,7 @@ class _TripCanvasScreenState extends State<TripCanvasScreen> {
                       onTapListener: _onMapTap,
                     ),
                   ),
-                  const _NLPlaceholder(),
+                  _NLInputBar(onSubmit: _onNLSubmit),
                 ],
               ),
       ),
@@ -380,36 +458,131 @@ class _AddPinSheet extends StatelessWidget {
   }
 }
 
-// ── NL placeholder (wired in Slice 2) ───────────────────────────────
+// ── NL input bar ──────────────────────────────────────────────────────
+//
+// Collapsed (48dp): shows a dim hint row, tap to open keyboard.
+// Expanded: text field + send button. Submit calls [onSubmit] and
+// collapses the bar. Shows a spinner while the request is in flight.
 
-class _NLPlaceholder extends StatelessWidget {
-  const _NLPlaceholder();
+class _NLInputBar extends StatefulWidget {
+  final Future<void> Function(String text) onSubmit;
+
+  const _NLInputBar({required this.onSubmit});
+
+  @override
+  State<_NLInputBar> createState() => _NLInputBarState();
+}
+
+class _NLInputBarState extends State<_NLInputBar> {
+  final _ctrl = TextEditingController();
+  final _focusNode = FocusNode();
+  bool _expanded = false;
+  bool _loading = false;
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  void _expand() {
+    setState(() => _expanded = true);
+    _focusNode.requestFocus();
+  }
+
+  Future<void> _submit() async {
+    final text = _ctrl.text.trim();
+    if (text.isEmpty) return;
+    setState(() => _loading = true);
+    _focusNode.unfocus();
+    try {
+      await widget.onSubmit(text);
+    } finally {
+      if (mounted) {
+        _ctrl.clear();
+        setState(() {
+          _loading = false;
+          _expanded = false;
+        });
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: () => ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Natural-language editing coming soon'),
-          duration: Duration(seconds: 2),
-        ),
-      ),
-      child: Container(
-        height: 48,
-        color: Colors.black.withOpacity(0.75),
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        alignment: Alignment.centerLeft,
-        child: Row(
-          children: [
-            const Icon(Icons.chat_bubble_outline, size: 18, color: Colors.white38),
-            const SizedBox(width: 10),
-            Text(
-              'Tell me what to change…',
-              style: TextStyle(color: Colors.white.withOpacity(0.35), fontSize: 14),
+    final bottom = MediaQuery.of(context).viewInsets.bottom;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 180),
+      color: Colors.black.withOpacity(0.85),
+      padding: EdgeInsets.fromLTRB(16, 8, 8, 8 + bottom),
+      child: _expanded
+          ? Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _ctrl,
+                    focusNode: _focusNode,
+                    enabled: !_loading,
+                    style: const TextStyle(color: Colors.white, fontSize: 14),
+                    decoration: const InputDecoration(
+                      hintText: 'e.g. "Add a coffee stop in Truckee"',
+                      hintStyle: TextStyle(color: Colors.white38, fontSize: 14),
+                      border: InputBorder.none,
+                      isDense: true,
+                    ),
+                    textInputAction: TextInputAction.send,
+                    onSubmitted: (_) => _submit(),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                SizedBox(
+                  width: 36,
+                  height: 36,
+                  child: _loading
+                      ? const Center(
+                          child: SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white54,
+                            ),
+                          ),
+                        )
+                      : IconButton(
+                          icon: const Icon(Icons.send, size: 18),
+                          color: Colors.white70,
+                          padding: EdgeInsets.zero,
+                          onPressed: _submit,
+                        ),
+                ),
+              ],
+            )
+          : GestureDetector(
+              onTap: _expand,
+              behavior: HitTestBehavior.opaque,
+              child: SizedBox(
+                height: 32,
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.chat_bubble_outline,
+                      size: 18,
+                      color: Colors.white38,
+                    ),
+                    const SizedBox(width: 10),
+                    Text(
+                      'Tell me what to change…',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.35),
+                        fontSize: 14,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
-          ],
-        ),
-      ),
     );
   }
 }

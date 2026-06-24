@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 import redis.asyncio as aioredis
 import os
 import logging
+import uuid
 from datetime import datetime
 from typing import Optional
 from dotenv import load_dotenv
@@ -866,6 +867,100 @@ async def delete_trip(
         raise HTTPException(status_code=404, detail="Trip not found")
     await trip.delete()
     return {"success": True}
+
+
+class NLEditPayload(BaseModel):
+    text: str
+
+
+class NLEditResponse(BaseModel):
+    pins: list
+    message: str
+
+
+@app.post("/api/v1/trips/{trip_id}/nl", response_model=NLEditResponse)
+async def canvas_nl_edit(
+    trip_id: str,
+    payload: NLEditPayload,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Apply a natural-language canvas instruction to the trip's pins.
+
+    Slice 2 ops: pin_stop adds a suggested pin (geocoded via Mapbox);
+    remove_stop removes anchors or suggested pins by name match.
+    Returns the full updated pin list so the client replaces state wholesale.
+    """
+    trip = await Trip.get(trip_id)
+    if trip is None or trip.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Trip not found")
+
+    from app.services.nl_parser import parse_nl_command
+    op = parse_nl_command(payload.text)
+
+    pins = list(trip.pins)
+
+    if op["type"] == "pin_stop":
+        location = op.get("location", "")
+        name = op.get("name", location or "New stop")
+        if not location:
+            return NLEditResponse(
+                pins=pins,
+                message="I need a specific place to add — try 'add a coffee stop in [city]'.",
+            )
+        svc = MapboxSearchService()
+        proximity = (trip.origin_lat, trip.origin_lng)
+        results = await svc.forward_geocode(location, proximity=proximity, limit=1)
+        if not results:
+            return NLEditResponse(
+                pins=pins,
+                message=f'Couldn\'t find "{location}" on the map. Try a more specific place name.',
+            )
+        r = results[0]
+        pins.append({
+            "type": "suggested",
+            "id": str(uuid.uuid4()),
+            "name": name,
+            "lat": r["lat"],
+            "lng": r["lng"],
+        })
+        trip.pins = pins
+        trip.updated_at = datetime.utcnow()
+        await trip.save()
+        return NLEditResponse(
+            pins=trip.pins,
+            message=f'Added "{name}" — tap + in the timeline to confirm it.',
+        )
+
+    elif op["type"] == "remove_stop":
+        pattern = op.get("name_pattern", "").lower().strip()
+        before = len(pins)
+        pins = [
+            p for p in pins
+            if not (
+                isinstance(p, dict)
+                and p.get("type") in ("anchor", "suggested")
+                and pattern in p.get("name", "").lower()
+            )
+        ]
+        removed = before - len(pins)
+        if removed == 0:
+            return NLEditResponse(
+                pins=trip.pins,
+                message=f'No stop matching "{op.get("name_pattern", "")}" found.',
+            )
+        trip.pins = pins
+        trip.updated_at = datetime.utcnow()
+        await trip.save()
+        return NLEditResponse(
+            pins=trip.pins,
+            message=f'Removed {removed} stop{"s" if removed > 1 else ""}.',
+        )
+
+    else:
+        return NLEditResponse(
+            pins=trip.pins,
+            message=op.get("message", "I didn't understand that. Try again."),
+        )
 
 
 @app.get("/api/v1/poi/facts")
