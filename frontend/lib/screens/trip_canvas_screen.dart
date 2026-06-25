@@ -183,13 +183,11 @@ class _TripCanvasScreenState extends State<TripCanvasScreen> {
 
   Future<void> _showAddPinSheet(double lat, double lng) async {
     final stopNumber = _pins.where((p) => p.type == 'anchor').length + 1;
-    final ctrl = TextEditingController(text: 'Stop $stopNumber');
     final name = await showModalBottomSheet<String>(
       context: context,
       isScrollControlled: true,
-      builder: (_) => _AddPinSheet(ctrl: ctrl),
+      builder: (_) => _AddPinSheet(initialText: 'Stop $stopNumber'),
     );
-    ctrl.dispose();
     if (name == null || name.trim().isEmpty || !mounted) return;
 
     final pin = TripPin(
@@ -406,9 +404,28 @@ class _TripCanvasScreenState extends State<TripCanvasScreen> {
 
 // ── Add-pin bottom sheet ─────────────────────────────────────────────
 
-class _AddPinSheet extends StatelessWidget {
-  final TextEditingController ctrl;
-  const _AddPinSheet({required this.ctrl});
+class _AddPinSheet extends StatefulWidget {
+  final String initialText;
+  const _AddPinSheet({required this.initialText});
+
+  @override
+  State<_AddPinSheet> createState() => _AddPinSheetState();
+}
+
+class _AddPinSheetState extends State<_AddPinSheet> {
+  late final TextEditingController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = TextEditingController(text: widget.initialText);
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -425,7 +442,7 @@ class _AddPinSheet extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           TextField(
-            controller: ctrl,
+            controller: _ctrl,
             autofocus: true,
             decoration: const InputDecoration(
               hintText: 'e.g. Coffee in Truckee',
@@ -446,7 +463,7 @@ class _AddPinSheet extends StatelessWidget {
               const SizedBox(width: 12),
               Expanded(
                 child: FilledButton(
-                  onPressed: () => Navigator.of(context).pop(ctrl.text),
+                  onPressed: () => Navigator.of(context).pop(_ctrl.text),
                   child: const Text('Add stop'),
                 ),
               ),
