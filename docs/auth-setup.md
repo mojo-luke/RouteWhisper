@@ -111,9 +111,43 @@ For convenience, drop these into a script. Don't commit them.
   you still see flicker, the cached session isn't restoring — check that
   `Supabase.initialize` is awaited in `main()` (it is, in the current code).
 
+## Email/password sign-in
+
+`SignInScreen` also has a plain email/password form (sign in or create an
+account), calling `AuthService.signUpWithPassword` / `signInWithPassword` —
+same `AuthGate` session path as Google, just a different front door. Needs
+Supabase's **Email** provider enabled (Authentication → Providers → Email),
+which is on by default for new projects.
+
+If the project has **"Confirm email"** turned on (Authentication → Providers
+→ Email → "Confirm email"), sign-up won't return a session immediately —
+the response's `session` is null until confirmed.
+
+**This app confirms via a 6-digit code, not the confirmation link.**
+RouteWhisper is mobile-only with no web frontend and no deep-link URL
+scheme registered, so the link's default redirect
+(`http://localhost:3000/#access_token=...`) goes nowhere useful. Instead,
+`SignInScreen` shows a "enter the code we emailed you" step that calls
+`AuthService.verifySignupCode` (`auth.verifyOTP(type: OtpType.signup)`).
+
+**Required dashboard step**: Supabase's default "Confirm signup" email
+template only includes the link (`{{ .ConfirmationURL }}`), not the raw
+code — you have to add it yourself:
+
+1. Supabase dashboard → **Authentication → Email Templates → Confirm signup**.
+2. Add `{{ .Token }}` somewhere in the template body (e.g. "Or enter this
+   code in the app: `{{ .Token }}`").
+3. Save. New signups will now receive the code; existing unconfirmed
+   users need to hit "Resend code" in the app to get one under the
+   updated template.
+
+If you'd rather support both (tap-to-confirm on a future web presence,
+code entry in the app today), keep `{{ .ConfirmationURL }}` in the
+template too — they're independent, and either one confirms the account.
+
 ## What's deferred
 
 - Apple sign-in (waits on iOS work).
-- Email / magic-link sign-in.
+- Magic-link sign-in.
 - Refresh-token rotation handling beyond what supabase_flutter does for free.
 - Linking an existing anonymous-device profile to a real account on first sign-in.

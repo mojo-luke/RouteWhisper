@@ -64,6 +64,59 @@ class AuthService {
     );
   }
 
+  /// Email/password sign-up. Depending on the Supabase project's "Confirm
+  /// email" setting, the returned response may come back with no session
+  /// (check `response.session == null`) — the user has to click the
+  /// confirmation link emailed to them before [signInWithPassword] works.
+  Future<AuthResponse> signUpWithPassword(String email, String password) {
+    return _client.auth.signUp(email: email, password: password);
+  }
+
+  /// Email/password sign-in. Real, user-facing auth — not the testing
+  /// helper below. Same AuthGate session path as Google sign-in.
+  Future<AuthResponse> signInWithPassword(String email, String password) {
+    return _client.auth.signInWithPassword(email: email, password: password);
+  }
+
+  /// Completes sign-up with the 6-digit code Supabase emailed after
+  /// [signUpWithPassword]. We use the code (OTP) flow rather than the
+  /// magic-link flow — this is a mobile-only app with no web frontend
+  /// to catch the link's default `http://localhost:3000#access_token=...`
+  /// redirect, and no deep-link URL scheme registered either. Requires
+  /// the Supabase project's "Confirm signup" email template to include
+  /// `{{ .Token }}` (it only has the link by default).
+  Future<AuthResponse> verifySignupCode(String email, String code) {
+    return _client.auth.verifyOTP(
+      email: email,
+      token: code,
+      type: OtpType.signup,
+    );
+  }
+
+  /// Re-sends the signup confirmation code, in case the first one
+  /// expired or the email got lost.
+  Future<void> resendSignupCode(String email) {
+    return _client.auth.resend(email: email, type: OtpType.signup);
+  }
+
+  /// Fixture credentials for on-device/manual testing only. Must match
+  /// TEST_EMAIL/TEST_PASSWORD in backend/scripts/manage_test_user.py,
+  /// which creates/deletes this user via Supabase's Admin API. Signing in
+  /// with these still goes through a real Supabase password grant and a
+  /// real AuthGate session — this isn't a UI bypass, just an alternate
+  /// front door that only exists in debug builds (see [signInForTesting]).
+  static const testFixtureEmail = 'routewhisper-test-fixture@example.com';
+  static const testFixturePassword = 'RW-test-fixture-2026!Zq9';
+
+  /// Signs in as the fixture test account created by
+  /// backend/scripts/manage_test_user.py. Only ever called from a
+  /// kDebugMode-gated button (see SignInScreen) — asserts here too so a
+  /// stray release-mode call fails loudly instead of silently working.
+  Future<AuthResponse> signInForTesting() async {
+    assert(kDebugMode, 'signInForTesting must never run in release builds.');
+    return signInWithPassword(testFixtureEmail, testFixturePassword);
+  }
+
   Future<void> signOut() async {
     await _client.auth.signOut();
     try {
