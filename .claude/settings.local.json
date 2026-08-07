@@ -31,7 +31,21 @@
       "Bash(./gradlew clean:*)",
       "Bash(flutter test:*)",
       "Bash(flutter analyze:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Read(//private/tmp/**)",
+      "Bash(jar xf *)",
+      "Bash(jar tf *)",
+      "Bash(javap -classpath classes.jar com.mapbox.navigation.voice.model.SpeechAnnouncement)",
+      "Bash(./gradlew :app:compileDebugKotlin)",
+      "Bash(adb -s emulator-5554 shell getprop ro.product.cpu.abi)",
+      "Bash(adb -s emulator-5554 shell pm dump com.routewhisper.route_whisper_app)",
+      "Bash(adb devices *)",
+      "Bash(adb -s emulator-5554 emu kill)",
+      "Bash(echo \"exit=$?\")",
+      "Bash(emulator -list-avds)",
+      "Read(//Users/lukesimmons/Library/Android/sdk/emulator/**)",
+      "Read(//Users/lukesimmons/.android/avd/**)",
+      "Bash(adb emu *)"
     ]
   }
 }
