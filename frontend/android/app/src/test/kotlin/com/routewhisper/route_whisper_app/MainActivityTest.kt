@@ -21,6 +21,7 @@ class MainActivityTest {
 
     private lateinit var activity: MainActivity
     private lateinit var mockFlutterEngine: FlutterEngine
+    private lateinit var mockMapActivity: MapActivity
 
     @Before
     fun setup() {
@@ -42,11 +43,20 @@ class MainActivityTest {
             .get()
 
         activity.configureFlutterEngine(mockFlutterEngine)
+
+        // Many handlers just delegate to MapActivity.currentInstance, a
+        // static reference production code sets from MapActivity.onCreate.
+        // Stand in a relaxed mock so we can verify the delegation without
+        // ever constructing a real MapActivity (which requires a live
+        // Mapbox MapView and can't run under Robolectric).
+        mockMapActivity = mockk(relaxed = true)
+        MapActivity.currentInstance = mockMapActivity
     }
 
     @After
     fun tearDown() {
         FlutterEngineCache.getInstance().remove(MainActivity.SHARED_ENGINE_ID)
+        MapActivity.currentInstance = null
         unmockkAll()
     }
 
@@ -307,5 +317,263 @@ class MainActivityTest {
         assert(waypointNames[2] == "Scenic Viewpoint") { "Third waypoint name should match" }
 
         verify { result.success("Route calculation started") }
+    }
+
+    // --- handleUpdateNavigationRoute ---
+
+    @Test
+    fun `updateNavigationRoute with valid args updates existing MapActivity in place`() {
+        val result = mockk<MethodChannel.Result>(relaxed = true)
+        val arguments = mapOf(
+            "originLat" to 37.7749,
+            "originLng" to -122.4194,
+            "destLat" to 34.0522,
+            "destLng" to -118.2437,
+            "waypoints" to listOf(listOf(-122.0, 36.5)),
+            "waypointNames" to listOf("Stop 1")
+        )
+        val call = MethodCall("updateNavigationRoute", arguments)
+
+        activity.handleUpdateNavigationRoute(call, result)
+
+        verify {
+            mockMapActivity.updateNavigationRoute(
+                originLat = 37.7749,
+                originLng = -122.4194,
+                destLat = 34.0522,
+                destLng = -118.2437,
+                waypoints = match { it.size == 1 },
+                waypointNames = listOf("Stop 1"),
+            )
+        }
+        verify { result.success("Route updated in-place") }
+    }
+
+    @Test
+    fun `updateNavigationRoute with missing coordinates returns error`() {
+        val result = mockk<MethodChannel.Result>(relaxed = true)
+        val call = MethodCall("updateNavigationRoute", mapOf("originLat" to 37.7749))
+
+        activity.handleUpdateNavigationRoute(call, result)
+
+        verify { result.error("INVALID_ARGS", "Missing coordinates", null) }
+        verify(exactly = 0) { mockMapActivity.updateNavigationRoute(any(), any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `updateNavigationRoute with no active MapActivity returns error`() {
+        MapActivity.currentInstance = null
+        val result = mockk<MethodChannel.Result>(relaxed = true)
+        val arguments = mapOf(
+            "originLat" to 37.7749,
+            "originLng" to -122.4194,
+            "destLat" to 34.0522,
+            "destLng" to -118.2437,
+        )
+        val call = MethodCall("updateNavigationRoute", arguments)
+
+        activity.handleUpdateNavigationRoute(call, result)
+
+        verify { result.error("NO_ACTIVITY", "MapActivity not active", null) }
+    }
+
+    // --- handleOpenMapView ---
+
+    @Test
+    fun `openMapView launches MapActivity as viewOnly`() {
+        val result = mockk<MethodChannel.Result>(relaxed = true)
+        val call = MethodCall("openMapView", null)
+
+        activity.handleOpenMapView(call, result)
+
+        val shadowActivity = shadowOf(activity)
+        val startedIntent = shadowActivity.nextStartedActivity
+        assert(startedIntent != null) { "Intent should have been started" }
+        assert(startedIntent.component?.className == "com.routewhisper.route_whisper_app.MapActivity")
+        assert(startedIntent.getBooleanExtra("viewOnly", false)) { "Should pass viewOnly=true" }
+        verify { result.success("Map view opened") }
+    }
+
+    // --- handleShowPoisOnMap ---
+
+    @Test
+    fun `showPoisOnMap with valid args forwards to MapActivity`() {
+        val result = mockk<MethodChannel.Result>(relaxed = true)
+        val pois = listOf(mapOf("id" to "poi-1", "name" to "Gas Station"))
+        val bounds = listOf(-122.5, 37.7, -122.4, 37.8)
+        val call = MethodCall("showPoisOnMap", mapOf("pois" to pois, "bounds" to bounds))
+
+        activity.handleShowPoisOnMap(call, result)
+
+        verify { mockMapActivity.showPoisOnMap(pois, bounds) }
+        verify { result.success(null) }
+    }
+
+    @Test
+    fun `showPoisOnMap with missing bounds returns error`() {
+        val result = mockk<MethodChannel.Result>(relaxed = true)
+        val call = MethodCall("showPoisOnMap", mapOf("pois" to listOf<Map<String, Any>>()))
+
+        activity.handleShowPoisOnMap(call, result)
+
+        verify { result.error("INVALID_ARGS", "Missing pois or bounds", null) }
+        verify(exactly = 0) { mockMapActivity.showPoisOnMap(any(), any()) }
+    }
+
+    @Test
+    fun `showPoisOnMap with malformed bounds returns error`() {
+        val result = mockk<MethodChannel.Result>(relaxed = true)
+        val call = MethodCall(
+            "showPoisOnMap",
+            mapOf("pois" to listOf<Map<String, Any>>(), "bounds" to listOf(-122.5, 37.7)),
+        )
+
+        activity.handleShowPoisOnMap(call, result)
+
+        verify { result.error("INVALID_ARGS", "Missing pois or bounds", null) }
+    }
+
+    @Test
+    fun `showPoisOnMap with no active MapActivity returns error`() {
+        MapActivity.currentInstance = null
+        val result = mockk<MethodChannel.Result>(relaxed = true)
+        val call = MethodCall(
+            "showPoisOnMap",
+            mapOf("pois" to listOf<Map<String, Any>>(), "bounds" to listOf(-122.5, 37.7, -122.4, 37.8)),
+        )
+
+        activity.handleShowPoisOnMap(call, result)
+
+        verify { result.error("NO_ACTIVITY", "MapActivity not active", null) }
+    }
+
+    // --- handleClearPoisFromMap / handleHideOverlay ---
+
+    @Test
+    fun `clearPoisFromMap forwards to MapActivity and succeeds`() {
+        val result = mockk<MethodChannel.Result>(relaxed = true)
+
+        activity.handleClearPoisFromMap(result)
+
+        verify { mockMapActivity.clearPoisFromMap() }
+        verify { result.success(null) }
+    }
+
+    @Test
+    fun `hideOverlay forwards to MapActivity and succeeds`() {
+        val result = mockk<MethodChannel.Result>(relaxed = true)
+
+        activity.handleHideOverlay(result)
+
+        verify { mockMapActivity.hideFlutterOverlay() }
+        verify { result.success(null) }
+    }
+
+    // --- handleSetBudgetStatus / handleClearBudgetStatus ---
+
+    @Test
+    fun `setBudgetStatus with valid args forwards minutes to MapActivity`() {
+        val result = mockk<MethodChannel.Result>(relaxed = true)
+        val call = MethodCall("setBudgetStatus", mapOf("usedMinutes" to 90, "totalMinutes" to 120))
+
+        activity.handleSetBudgetStatus(call, result)
+
+        verify { mockMapActivity.setBudgetStatusUi(90, 120) }
+        verify { result.success(null) }
+    }
+
+    @Test
+    fun `setBudgetStatus with missing fields returns error`() {
+        val result = mockk<MethodChannel.Result>(relaxed = true)
+        val call = MethodCall("setBudgetStatus", mapOf("usedMinutes" to 90))
+
+        activity.handleSetBudgetStatus(call, result)
+
+        verify { result.error("INVALID_ARGS", "Missing usedMinutes or totalMinutes", null) }
+        verify(exactly = 0) { mockMapActivity.setBudgetStatusUi(any(), any()) }
+    }
+
+    @Test
+    fun `clearBudgetStatus forwards to MapActivity and succeeds`() {
+        val result = mockk<MethodChannel.Result>(relaxed = true)
+
+        activity.handleClearBudgetStatus(result)
+
+        verify { mockMapActivity.clearBudgetStatusUi() }
+        verify { result.success(null) }
+    }
+
+    // --- handleSetRecommendation / handleClearRecommendation ---
+
+    @Test
+    fun `setRecommendation with valid args forwards fields to MapActivity`() {
+        val result = mockk<MethodChannel.Result>(relaxed = true)
+        val arguments = mapOf(
+            "poiId" to "poi-1",
+            "name" to "Scenic Overlook",
+            "category" to "viewpoint",
+            "reason" to "You have 20 spare minutes",
+        )
+        val call = MethodCall("setRecommendation", arguments)
+
+        activity.handleSetRecommendation(call, result)
+
+        verify { mockMapActivity.setRecommendationUi("poi-1", "Scenic Overlook", "viewpoint", "You have 20 spare minutes") }
+        verify { result.success(null) }
+    }
+
+    @Test
+    fun `setRecommendation with missing fields returns error`() {
+        val result = mockk<MethodChannel.Result>(relaxed = true)
+        val call = MethodCall("setRecommendation", mapOf("poiId" to "poi-1"))
+
+        activity.handleSetRecommendation(call, result)
+
+        verify { result.error("INVALID_ARGS", "Missing recommendation fields", null) }
+        verify(exactly = 0) { mockMapActivity.setRecommendationUi(any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `clearRecommendation forwards to MapActivity and succeeds`() {
+        val result = mockk<MethodChannel.Result>(relaxed = true)
+
+        activity.handleClearRecommendation(result)
+
+        verify { mockMapActivity.clearRecommendationUi() }
+        verify { result.success(null) }
+    }
+
+    // --- handleSetTurnByTurnVoiceEnabled ---
+
+    @Test
+    fun `setTurnByTurnVoiceEnabled true sets the companion flag`() {
+        val result = mockk<MethodChannel.Result>(relaxed = true)
+        val call = MethodCall("setTurnByTurnVoiceEnabled", mapOf("enabled" to true))
+
+        activity.handleSetTurnByTurnVoiceEnabled(call, result)
+
+        assert(MapActivity.turnByTurnVoiceEnabled) { "Should enable turn-by-turn voice" }
+        verify { result.success(null) }
+    }
+
+    @Test
+    fun `setTurnByTurnVoiceEnabled false clears the companion flag`() {
+        val result = mockk<MethodChannel.Result>(relaxed = true)
+        val call = MethodCall("setTurnByTurnVoiceEnabled", mapOf("enabled" to false))
+
+        activity.handleSetTurnByTurnVoiceEnabled(call, result)
+
+        assert(!MapActivity.turnByTurnVoiceEnabled) { "Should disable turn-by-turn voice" }
+        verify { result.success(null) }
+    }
+
+    @Test
+    fun `setTurnByTurnVoiceEnabled with missing arg returns error`() {
+        val result = mockk<MethodChannel.Result>(relaxed = true)
+        val call = MethodCall("setTurnByTurnVoiceEnabled", emptyMap<String, Any>())
+
+        activity.handleSetTurnByTurnVoiceEnabled(call, result)
+
+        verify { result.error("INVALID_ARGS", "Missing enabled", null) }
     }
 }

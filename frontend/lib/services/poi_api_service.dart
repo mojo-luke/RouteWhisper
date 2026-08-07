@@ -38,7 +38,8 @@ class POIApiService {
     };
 
     print('🔍 POI API Request: ${url.toString()}');
-    print('📦 Request body: ${jsonEncode(requestBody).substring(0, 100)}...');
+    final encodedBody = jsonEncode(requestBody);
+    print('📦 Request body: ${encodedBody.substring(0, encodedBody.length.clamp(0, 100))}...');
 
     try {
       // Re-build headers inside the closure so a refresh-retry picks up

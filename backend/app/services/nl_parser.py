@@ -60,6 +60,9 @@ def parse_nl_command(text: str) -> dict:
             messages=[{"role": "user", "content": text.strip()}],
         )
         raw = resp.content[0].text.strip()
+        if raw.startswith("```"):
+            lines = raw.splitlines()
+            raw = "\n".join(lines[1:-1]).strip()
         return json.loads(raw)
     except json.JSONDecodeError:
         logger.warning("NL parser returned non-JSON: %r", raw)

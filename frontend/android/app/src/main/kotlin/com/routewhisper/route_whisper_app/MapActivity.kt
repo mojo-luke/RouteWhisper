@@ -138,6 +138,7 @@ class MapActivity : AppCompatActivity() {
     // call signature symmetric with the turn-instruction path.
     private val narrationPlayerCallback = MapboxNavigationConsumer<SpeechAnnouncement> { /* no-op */ }
 
+
     // Recenter button for manual camera control
     private lateinit var recenterButton: FloatingActionButton
     private var isUserControllingCamera = false
@@ -206,12 +207,12 @@ class MapActivity : AppCompatActivity() {
     private var activeNarrationId: String? = null
     private var narrationPulseAnimator: android.animation.ValueAnimator? = null
 
-    // Waypoint arrival and departure tracking
-    private var lastWaypointLocation: Point? = null
-    private var isMonitoringDeparture = false
-    private var lastTriggeredWaypointLeg: Int = -1  // Track which waypoint we've already triggered arrival for
-    private var previousLegIndex: Int = 0  // Track previous leg to detect transitions
-    private val WAYPOINT_ARRIVAL_THRESHOLD_METERS = 50.0  // 50m arrival threshold
+    // Waypoint arrival and departure tracking. Decision logic lives in
+    // WaypointArrivalTracker (plain Kotlin, no Android/Mapbox deps) so it's
+    // unit-testable without a live Mapbox environment; this Activity just
+    // feeds it primitives extracted from Mapbox callbacks and acts on the
+    // result (Snackbar + method-channel calls).
+    private val arrivalTracker = WaypointArrivalTracker()
     private var waypointNames: Array<String>? = null  // Waypoint names for UI display
 
     // Track if navigation was explicitly cancelled by user (vs just closing activity)
@@ -413,8 +414,7 @@ class MapActivity : AppCompatActivity() {
             Log.d(TAG, "Started replay trip session for simulation")
 
             // Reset leg tracking for new navigation session
-            previousLegIndex = 0
-            lastTriggeredWaypointLeg = -1
+            arrivalTracker.reset()
 
             // Request route only if not in view-only mode and coordinates are provided
             if (!viewOnly && originLat != 0.0 && originLng != 0.0 && destLat != 0.0 && destLng != 0.0) {
@@ -533,85 +533,69 @@ class MapActivity : AppCompatActivity() {
         mapboxNavigation?.registerRouteProgressObserver(RouteProgressObserver { routeProgress ->
             val currentLeg = routeProgress.currentLegProgress?.legIndex ?: -1
             val legRemaining = routeProgress.currentLegProgress?.distanceRemaining ?: 0.0
+            val route = routeProgress.navigationRoute.directionsRoute
+            val totalLegs = route.legs()?.size ?: 0
 
             // Track distance-along-route for the narration service's
             // lookahead logic. Mapbox doesn't expose distanceTraveled
             // directly; derive from totalDistance - distanceRemaining.
-            val totalDistance = routeProgress.navigationRoute.directionsRoute.distance() ?: 0.0
+            val totalDistance = route.distance() ?: 0.0
             routeDistanceTraveledMeters = (totalDistance - routeProgress.distanceRemaining).coerceAtLeast(0.0)
 
             Log.d(TAG, "🎯 Route progress: leg=$currentLeg, legRemaining=${legRemaining}m, totalRemaining=${routeProgress.distanceRemaining}m, traveled=${routeDistanceTraveledMeters}m")
 
             // Detect leg transitions - this works even at high simulation speeds
-            if (currentLeg > previousLegIndex && currentLeg >= 0) {
-                Log.d(TAG, "🔄 LEG TRANSITION DETECTED: $previousLegIndex → $currentLeg")
+            val completedLegIndex = arrivalTracker.onLegTransition(currentLeg, totalLegs)
+            if (completedLegIndex != null) {
+                Log.d(TAG, "🔄 LEG TRANSITION DETECTED, WAYPOINT ARRIVAL: Completed leg $completedLegIndex")
 
-                // We've completed the previous leg, so trigger arrival for it
-                val completedLegIndex = previousLegIndex
+                // Get the destination coordinates of the completed leg
+                val coordinates = route.legs()?.get(completedLegIndex)?.steps()?.lastOrNull()?.maneuver()?.location()
 
-                // Only trigger for intermediate waypoints (not final destination)
-                val route = routeProgress.navigationRoute.directionsRoute
-                val totalLegs = route.legs()?.size ?: 0
+                if (coordinates != null) {
+                    // Start monitoring for departure
+                    arrivalTracker.startDepartureMonitoring(coordinates.latitude(), coordinates.longitude())
 
-                if (completedLegIndex < totalLegs - 1) {
-                    Log.d(TAG, "📍 WAYPOINT ARRIVAL (via leg transition): Completed leg $completedLegIndex")
-
-                    // Get the destination coordinates of the completed leg
-                    val coordinates = route.legs()?.get(completedLegIndex)?.steps()?.lastOrNull()?.maneuver()?.location()
-
-                    if (coordinates != null) {
-                        val waypointLocation = Point.fromLngLat(coordinates.longitude(), coordinates.latitude())
-
-                        // Start monitoring for departure
-                        startDepartureMonitoring(waypointLocation)
-
-                        // TECHNICAL DEBT: Snackbar instead of rich arrival notification
-                        // See TECHNICAL_DEBT.md #2 for planned rich overlay with timer/buttons
-                        // This temporary Snackbar provides basic arrival notification
-                        // - "I'm Here" acknowledgment button
-                        // - "Continue" button for manual departure
-                        // - "Skip" button to skip this waypoint
-                        // See: /Users/lukesimmons/.claude/plans/bright-seeking-valley.md
-                        // Phase 4, Step 4C: waypoint_arrival_notification.dart equivalent
-                        runOnUiThread {
-                            val waypointName = if (waypointNames != null && completedLegIndex < waypointNames!!.size) {
-                                waypointNames!![completedLegIndex]
-                            } else {
-                                "waypoint ${completedLegIndex + 1}"
-                            }
-
-                            Snackbar.make(
-                                mapView,
-                                "📍 Arrived at $waypointName",
-                                Snackbar.LENGTH_LONG
-                            ).setAction("Continue") {
-                                // User manually confirmed departure - auto-departure will also trigger
-                                Log.d(TAG, "User manually confirmed departure from $waypointName")
-                            }.show()
+                    // TECHNICAL DEBT: Snackbar instead of rich arrival notification
+                    // See TECHNICAL_DEBT.md #2 for planned rich overlay with timer/buttons
+                    // This temporary Snackbar provides basic arrival notification
+                    // - "I'm Here" acknowledgment button
+                    // - "Continue" button for manual departure
+                    // - "Skip" button to skip this waypoint
+                    // See: /Users/lukesimmons/.claude/plans/bright-seeking-valley.md
+                    // Phase 4, Step 4C: waypoint_arrival_notification.dart equivalent
+                    runOnUiThread {
+                        val waypointName = if (waypointNames != null && completedLegIndex < waypointNames!!.size) {
+                            waypointNames!![completedLegIndex]
+                        } else {
+                            "waypoint ${completedLegIndex + 1}"
                         }
 
-                        // Notify Flutter about arrival
-                        Log.d(TAG, "Attempting to send waypoint arrival to Flutter for leg $completedLegIndex")
-                        runOnUiThread {
-                            try {
-                                MainActivity.sendWaypointArrived(
-                                    completedLegIndex,
-                                    coordinates.latitude(),
-                                    coordinates.longitude()
-                                )
-                                Log.d(TAG, "✅ sendWaypointArrived call completed")
-                            } catch (e: Exception) {
-                                Log.e(TAG, "❌ Error calling sendWaypointArrived: ${e.message}", e)
-                            }
+                        Snackbar.make(
+                            mapView,
+                            "📍 Arrived at $waypointName",
+                            Snackbar.LENGTH_LONG
+                        ).setAction("Continue") {
+                            // User manually confirmed departure - auto-departure will also trigger
+                            Log.d(TAG, "User manually confirmed departure from $waypointName")
+                        }.show()
+                    }
+
+                    // Notify Flutter about arrival
+                    Log.d(TAG, "Attempting to send waypoint arrival to Flutter for leg $completedLegIndex")
+                    runOnUiThread {
+                        try {
+                            MainActivity.sendWaypointArrived(
+                                completedLegIndex,
+                                coordinates.latitude(),
+                                coordinates.longitude()
+                            )
+                            Log.d(TAG, "✅ sendWaypointArrived call completed")
+                        } catch (e: Exception) {
+                            Log.e(TAG, "❌ Error calling sendWaypointArrived: ${e.message}", e)
                         }
                     }
                 }
-
-                previousLegIndex = currentLeg
-            } else if (currentLeg >= 0 && previousLegIndex < 0) {
-                // Initialize previousLegIndex on first valid update
-                previousLegIndex = currentLeg
-                Log.d(TAG, "🎯 Initial leg: $currentLeg")
             }
 
             // Update maneuver view (v3: renderManeuvers takes Expected directly)
@@ -692,7 +676,7 @@ class MapActivity : AppCompatActivity() {
                 val legIndex = routeProgress.currentLegProgress?.legIndex ?: return
 
                 // Avoid duplicate triggers if manual detection already fired
-                if (lastTriggeredWaypointLeg == legIndex) {
+                if (arrivalTracker.isArrivalAlreadyTriggered(legIndex)) {
                     Log.d(TAG, "⏭️ Skipping duplicate arrival for leg $legIndex (already triggered)")
                     return
                 }
@@ -705,13 +689,11 @@ class MapActivity : AppCompatActivity() {
                 val coordinates = route.legs()?.get(legIndex)?.steps()?.lastOrNull()?.maneuver()?.location()
 
                 if (coordinates != null) {
-                    val waypointLocation = Point.fromLngLat(coordinates.longitude(), coordinates.latitude())
-
                     // Mark this waypoint as triggered
-                    lastTriggeredWaypointLeg = legIndex
+                    arrivalTracker.markArrivalTriggered(legIndex)
 
                     // Start monitoring for departure
-                    startDepartureMonitoring(waypointLocation)
+                    arrivalTracker.startDepartureMonitoring(coordinates.latitude(), coordinates.longitude())
 
                     // Notify Flutter about arrival
                     runOnUiThread {
@@ -743,52 +725,18 @@ class MapActivity : AppCompatActivity() {
         Log.d(TAG, "All observers registered")
     }
 
-    private fun startDepartureMonitoring(waypointLocation: Point) {
-        lastWaypointLocation = waypointLocation
-        isMonitoringDeparture = true
-        Log.d(TAG, "🔍 Started departure monitoring for waypoint at (${waypointLocation.latitude()}, ${waypointLocation.longitude()})")
-    }
-
     private fun checkDepartureConditions(currentLocation: Location) {
-        if (!isMonitoringDeparture || lastWaypointLocation == null) return
-
-        val distance = calculateDistance(
-            lastWaypointLocation!!.latitude(),
-            lastWaypointLocation!!.longitude(),
+        val departure = arrivalTracker.checkDeparture(
             currentLocation.latitude,
-            currentLocation.longitude
-        )
+            currentLocation.longitude,
+            (currentLocation.speed ?: 0f).toDouble() * 2.23694,
+        ) ?: return
 
-        // Convert speed from m/s to mph (handle null speed)
-        val speedMph = (currentLocation.speed ?: 0f).toDouble() * 2.23694
+        Log.d(TAG, "🚗 Auto-departure detected: ${String.format("%.1f", departure.distanceMeters)}m away, ${String.format("%.1f", departure.speedMph)}mph")
 
-        // Departure conditions: >50m away AND >5mph speed
-        if (distance > 50.0 && speedMph > 5.0) {
-            Log.d(TAG, "🚗 Auto-departure detected: ${String.format("%.1f", distance)}m away, ${String.format("%.1f", speedMph)}mph")
-
-            runOnUiThread {
-                MainActivity.sendAutoDepartureDetected(distance, speedMph)
-            }
-
-            // Stop monitoring once departure detected
-            isMonitoringDeparture = false
-            lastWaypointLocation = null
+        runOnUiThread {
+            MainActivity.sendAutoDepartureDetected(departure.distanceMeters, departure.speedMph)
         }
-    }
-
-    /**
-     * Calculate distance between two coordinates using Haversine formula
-     * Returns distance in meters
-     */
-    private fun calculateDistance(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
-        val R = 6371000.0 // Earth radius in meters
-        val dLat = Math.toRadians(lat2 - lat1)
-        val dLon = Math.toRadians(lon2 - lon1)
-        val a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-                Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2)) *
-                Math.sin(dLon / 2) * Math.sin(dLon / 2)
-        val c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
-        return R * c
     }
 
     /**
@@ -800,32 +748,21 @@ class MapActivity : AppCompatActivity() {
         val legIndex = currentLegProgress.legIndex
         val distanceToWaypoint = currentLegProgress.distanceRemaining
 
-        // Only check intermediate waypoints (not final destination)
         val route = routeProgress.navigationRoute.directionsRoute
         val totalLegs = route.legs()?.size ?: 0
-        val isIntermediateWaypoint = legIndex < totalLegs - 1
 
-        // Check if:
-        // 1. This is an intermediate waypoint (not final destination)
-        // 2. We're within arrival threshold
-        // 3. We haven't already triggered arrival for this waypoint
-        if (isIntermediateWaypoint &&
-            distanceToWaypoint <= WAYPOINT_ARRIVAL_THRESHOLD_METERS &&
-            lastTriggeredWaypointLeg != legIndex) {
-
+        if (arrivalTracker.shouldTriggerManualArrival(legIndex, totalLegs, distanceToWaypoint.toDouble())) {
             Log.d(TAG, "📍 MANUAL ARRIVAL DETECTED: Waypoint at leg $legIndex, distance=${String.format("%.1f", distanceToWaypoint)}m")
 
             // Get waypoint coordinates
             val coordinates = route.legs()?.get(legIndex)?.steps()?.lastOrNull()?.maneuver()?.location()
 
             if (coordinates != null) {
-                val waypointLocation = Point.fromLngLat(coordinates.longitude(), coordinates.latitude())
-
                 // Mark this waypoint as triggered
-                lastTriggeredWaypointLeg = legIndex
+                arrivalTracker.markArrivalTriggered(legIndex)
 
                 // Start monitoring for departure
-                startDepartureMonitoring(waypointLocation)
+                arrivalTracker.startDepartureMonitoring(coordinates.latitude(), coordinates.longitude())
 
                 // Notify Flutter about arrival
                 runOnUiThread {
@@ -1254,8 +1191,7 @@ class MapActivity : AppCompatActivity() {
             ).show()
 
             // Reset leg tracking for updated route
-            previousLegIndex = 0
-            lastTriggeredWaypointLeg = -1
+            arrivalTracker.reset()
 
             // For in-nav updates the route MUST start from the user's current
             // location, not the original trip origin — otherwise the puck

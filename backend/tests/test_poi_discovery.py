@@ -3,9 +3,15 @@ Unit tests for POI discovery functionality
 Tests polyline decoding, corridor extraction, ranking, and caching
 """
 
+import os
+import time
+
+import jwt
 import pytest
+from fastapi.testclient import TestClient
 from typing import List, Tuple
 
+from app.main import app
 from app.models import POI, POICategory
 from app.utils.polyline import (
     decode_polyline,
@@ -17,14 +23,66 @@ from app.utils.polyline import (
 from app.services.poi_ranking import POIRankingService
 
 
+def _encode_polyline(points: List[Tuple[float, float]], precision: int = 6) -> str:
+    """Google/Mapbox polyline encoder — precision 6 to match decode_polyline's
+    default (Mapbox convention). [points] are (lat, lng) pairs. There's no
+    encoder in app/utils/polyline.py (the backend only ever decodes
+    client-supplied polylines), so this mirrors the decode algorithm."""
+    factor = 10 ** precision
+    chunks = []
+    prev_lat = 0
+    prev_lng = 0
+    for lat, lng in points:
+        lat_i = round(lat * factor)
+        lng_i = round(lng * factor)
+        chunks.append(_encode_value(lat_i - prev_lat))
+        chunks.append(_encode_value(lng_i - prev_lng))
+        prev_lat, prev_lng = lat_i, lng_i
+    return "".join(chunks)
+
+
+def _encode_value(value: int) -> str:
+    shifted = value << 1
+    if value < 0:
+        shifted = ~shifted
+    out = []
+    while shifted >= 0x20:
+        out.append(chr((0x20 | (shifted & 0x1F)) + 63))
+        shifted >>= 5
+    out.append(chr(shifted + 63))
+    return "".join(out)
+
+
+def _make_test_jwt() -> str:
+    """Mint a real HS256 Supabase-shaped JWT using the same
+    SUPABASE_JWT_SECRET the running backend verifies against (loaded from
+    backend/.env via app.main's load_dotenv() import-time side effect) —
+    exercises the real app.auth.current_user verification path rather
+    than overriding the dependency."""
+    secret = os.getenv("SUPABASE_JWT_SECRET")
+    assert secret, "SUPABASE_JWT_SECRET must be set in backend/.env for this test"
+    now = int(time.time())
+    payload = {
+        "sub": "00000000-0000-0000-0000-000000000042",
+        "email": "backend-endpoint-test@example.com",
+        "role": "authenticated",
+        "aud": "authenticated",
+        "iat": now,
+        "exp": now + 3600,
+    }
+    return jwt.encode(payload, secret, algorithm="HS256")
+
+
 class TestPolylineDecoding:
     """Test polyline encoding/decoding utilities."""
 
     def test_decode_simple_polyline(self):
         """Test decoding a simple Google-encoded polyline."""
-        # This polyline represents 3 points
+        # This polyline represents 3 points. It's the Google-standard
+        # precision-5 example from polyline.py's own docstring — decode_polyline
+        # defaults to precision=6 (Mapbox), so it must be passed explicitly here.
         polyline = "_p~iF~ps|U_ulLnnqC_mqNvxq`@"
-        points = decode_polyline(polyline)
+        points = decode_polyline(polyline, precision=5)
 
         assert len(points) == 3
         assert all(isinstance(p, tuple) and len(p) == 2 for p in points)
@@ -228,20 +286,78 @@ class TestCacheService:
         assert key1 != key3
 
 
-# Integration-style test (requires running server)
-@pytest.mark.skip(reason="Requires running backend server")
+# Real integration test — runs the actual FastAPI app in-process against
+# the real Redis/MongoDB/Mapbox from docker-compose (backend/.env points
+# at localhost, so these are reachable from the test process without
+# needing a separately-running uvicorn server). No mocked I/O.
+#
+# Requires: `docker-compose up -d` (redis + mongodb reachable), and a
+# real MAPBOX_ACCESS_TOKEN in backend/.env.
 class TestPOIEndpoint:
-    """Integration tests for POI discovery endpoint."""
+    """Integration tests for the real POI discovery endpoint."""
 
-    async def test_poi_endpoint_with_valid_polyline(self):
-        """Test POI endpoint with valid request."""
-        # This would require httpx client and running server
-        pass
+    def test_poi_endpoint_with_valid_polyline(self):
+        # Embarcadero -> Fisherman's Wharf: same POI-dense SF corridor
+        # frontend/integration_test/waypoint_navigation_test.dart uses.
+        polyline = _encode_polyline([(37.7955, -122.3937), (37.8080, -122.4177)])
+        token = _make_test_jwt()
 
-    async def test_poi_endpoint_caching(self):
-        """Test that second request uses cache."""
-        # This would test cache hit behavior
-        pass
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/v1/route/pois",
+                json={
+                    "encoded_polyline": polyline,
+                    "corridor_radius_miles": 5.0,
+                    "limit_per_category": 5,
+                },
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total_found"] >= 1, (
+            "Expected real POIs along a known POI-dense SF corridor — if "
+            "this is 0, check MAPBOX_ACCESS_TOKEN in backend/.env and that "
+            "redis/mongodb are up (docker-compose up -d)."
+        )
+        assert len(data["pois"]) == data["total_found"]
+        assert all("name" in poi and "category" in poi for poi in data["pois"])
+
+    def test_poi_endpoint_without_auth_is_rejected(self):
+        # No Authorization header at all — should 401 via the real
+        # app.auth.current_user dependency, not a mocked one.
+        polyline = _encode_polyline([(37.7955, -122.3937), (37.8080, -122.4177)])
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/v1/route/pois",
+                json={"encoded_polyline": polyline, "corridor_radius_miles": 5.0},
+            )
+        assert response.status_code == 401
+
+    def test_poi_endpoint_caching(self):
+        # A corridor distinct from the other test in this class, so a
+        # leftover cache entry from a prior run of that test can't make
+        # this test's *first* call look pre-cached.
+        polyline = _encode_polyline([(37.7749, -122.4194), (37.7849, -122.4294)])
+        token = _make_test_jwt()
+        body = {
+            "encoded_polyline": polyline,
+            "corridor_radius_miles": 5.0,
+            "limit_per_category": 5,
+        }
+        headers = {"Authorization": f"Bearer {token}"}
+
+        with TestClient(app) as client:
+            first = client.post("/api/v1/route/pois", json=body, headers=headers)
+            second = client.post("/api/v1/route/pois", json=body, headers=headers)
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        # Only assert the cache state on the *second* call — the first
+        # call's cache state depends on whatever a previous test run left
+        # in Redis (1hr TTL), which isn't this test's concern.
+        assert second.json()["cached"] is True
+        assert second.json()["total_found"] == first.json()["total_found"]
 
 
 if __name__ == "__main__":

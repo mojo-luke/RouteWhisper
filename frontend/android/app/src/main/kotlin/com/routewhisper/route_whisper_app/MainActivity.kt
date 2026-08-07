@@ -1,7 +1,10 @@
 package com.routewhisper.route_whisper_app
 
+import android.content.Context
 import android.content.Intent
 import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.media.MediaPlayer
 import android.speech.tts.TextToSpeech
 import android.util.Log
@@ -32,6 +35,7 @@ class MainActivity : FlutterActivity() {
     // — release on destroy. Separate audio path from the local-TTS
     // fallback above.
     private var narrationPlayer: MediaPlayer? = null
+    private var narrationFocusRequest: AudioFocusRequest? = null
 
     // Where the backend lives, used to resolve relative audio URLs.
     // 10.0.2.2 is the emulator's loopback to the Mac. Real devices on
@@ -297,7 +301,7 @@ class MainActivity : FlutterActivity() {
         result.success("Route updated in-place")
     }
 
-    private fun handleOpenMapView(call: MethodCall, result: MethodChannel.Result) {
+    internal fun handleOpenMapView(call: MethodCall, result: MethodChannel.Result) {
         Log.d("MainActivity", "Open map view")
 
         // Launch MapActivity without coordinates - it will show current map state
@@ -311,7 +315,7 @@ class MainActivity : FlutterActivity() {
         result.success("Map view opened")
     }
 
-    private fun handleShowPoisOnMap(call: MethodCall, result: MethodChannel.Result) {
+    internal fun handleShowPoisOnMap(call: MethodCall, result: MethodChannel.Result) {
         val poisRaw = call.argument<List<Map<String, Any>>>("pois")
         val bounds = call.argument<List<Double>>("bounds")
         if (poisRaw == null || bounds == null || bounds.size != 4) {
@@ -330,17 +334,17 @@ class MainActivity : FlutterActivity() {
         result.success(null)
     }
 
-    private fun handleClearPoisFromMap(result: MethodChannel.Result) {
+    internal fun handleClearPoisFromMap(result: MethodChannel.Result) {
         MapActivity.currentInstance?.clearPoisFromMap()
         result.success(null)
     }
 
-    private fun handleHideOverlay(result: MethodChannel.Result) {
+    internal fun handleHideOverlay(result: MethodChannel.Result) {
         MapActivity.currentInstance?.hideFlutterOverlay()
         result.success(null)
     }
 
-    private fun handleSetBudgetStatus(call: MethodCall, result: MethodChannel.Result) {
+    internal fun handleSetBudgetStatus(call: MethodCall, result: MethodChannel.Result) {
         val used = call.argument<Int>("usedMinutes")
         val total = call.argument<Int>("totalMinutes")
         if (used == null || total == null) {
@@ -351,12 +355,12 @@ class MainActivity : FlutterActivity() {
         result.success(null)
     }
 
-    private fun handleClearBudgetStatus(result: MethodChannel.Result) {
+    internal fun handleClearBudgetStatus(result: MethodChannel.Result) {
         MapActivity.currentInstance?.clearBudgetStatusUi()
         result.success(null)
     }
 
-    private fun handleSetRecommendation(call: MethodCall, result: MethodChannel.Result) {
+    internal fun handleSetRecommendation(call: MethodCall, result: MethodChannel.Result) {
         val poiId = call.argument<String>("poiId")
         val name = call.argument<String>("name")
         val category = call.argument<String>("category")
@@ -369,7 +373,7 @@ class MainActivity : FlutterActivity() {
         result.success(null)
     }
 
-    private fun handleClearRecommendation(result: MethodChannel.Result) {
+    internal fun handleClearRecommendation(result: MethodChannel.Result) {
         MapActivity.currentInstance?.clearRecommendationUi()
         result.success(null)
     }
@@ -393,7 +397,7 @@ class MainActivity : FlutterActivity() {
      * handles its own focus politely so this should duck rather than
      * stomp.
      */
-    private fun handleSpeakNarration(call: MethodCall, result: MethodChannel.Result) {
+    internal fun handleSpeakNarration(call: MethodCall, result: MethodChannel.Result) {
         val text = call.argument<String>("text")
         if (text.isNullOrBlank()) {
             result.error("INVALID_ARGS", "Missing text", null)
@@ -409,7 +413,7 @@ class MainActivity : FlutterActivity() {
      * meaning while the map is up). Failures don't surface as Flutter
      * errors — narration markers are a UX nicety, not load-bearing.
      */
-    private fun handleAddNarrationMarker(call: MethodCall, result: MethodChannel.Result) {
+    internal fun handleAddNarrationMarker(call: MethodCall, result: MethodChannel.Result) {
         val id = call.argument<String>("id")
         val lat = call.argument<Double>("lat")
         val lng = call.argument<Double>("lng")
@@ -422,13 +426,13 @@ class MainActivity : FlutterActivity() {
         result.success(null)
     }
 
-    private fun handleSetActiveNarrationMarker(call: MethodCall, result: MethodChannel.Result) {
+    internal fun handleSetActiveNarrationMarker(call: MethodCall, result: MethodChannel.Result) {
         val id = call.argument<String>("id") // may be null
         MapActivity.currentInstance?.setActiveNarrationMarker(id)
         result.success(null)
     }
 
-    private fun handleClearNarrationMarkers(result: MethodChannel.Result) {
+    internal fun handleClearNarrationMarkers(result: MethodChannel.Result) {
         MapActivity.currentInstance?.clearNarrationMarkers()
         result.success(null)
     }
@@ -440,7 +444,7 @@ class MainActivity : FlutterActivity() {
      * MapActivity isn't currently in the foreground — the audio
      * still plays, just no visible card.
      */
-    private fun handleSetNarration(call: MethodCall, result: MethodChannel.Result) {
+    internal fun handleSetNarration(call: MethodCall, result: MethodChannel.Result) {
         val pageid = call.argument<Int>("pageid")
         val title = call.argument<String>("title")
         val primary = call.argument<String>("primary")
@@ -461,7 +465,7 @@ class MainActivity : FlutterActivity() {
         result.success(null)
     }
 
-    private fun handleSetNarrationSaved(call: MethodCall, result: MethodChannel.Result) {
+    internal fun handleSetNarrationSaved(call: MethodCall, result: MethodChannel.Result) {
         val isSaved = call.argument<Boolean>("isSaved")
         if (isSaved == null) {
             result.error("INVALID_ARGS", "Missing isSaved", null)
@@ -471,7 +475,7 @@ class MainActivity : FlutterActivity() {
         result.success(null)
     }
 
-    private fun handleClearNarration(result: MethodChannel.Result) {
+    internal fun handleClearNarration(result: MethodChannel.Result) {
         MapActivity.currentInstance?.clearNarrationUi()
         result.success(null)
     }
@@ -482,7 +486,7 @@ class MainActivity : FlutterActivity() {
      * value whether or not it's currently in the foreground (the
      * preference might change between trips).
      */
-    private fun handleSetTurnByTurnVoiceEnabled(call: MethodCall, result: MethodChannel.Result) {
+    internal fun handleSetTurnByTurnVoiceEnabled(call: MethodCall, result: MethodChannel.Result) {
         val enabled = call.argument<Boolean>("enabled")
         if (enabled == null) {
             result.error("INVALID_ARGS", "Missing enabled", null)
@@ -505,7 +509,7 @@ class MainActivity : FlutterActivity() {
      * the bridge call. (Bridge fallback to local TTS isn't auto —
      * the device commits to one path per line via NarrationService.)
      */
-    private fun handlePlayNarrationAudio(call: MethodCall, result: MethodChannel.Result) {
+    internal fun handlePlayNarrationAudio(call: MethodCall, result: MethodChannel.Result) {
         val rawUrl = call.argument<String>("url")
         if (rawUrl.isNullOrBlank()) {
             result.error("INVALID_ARGS", "Missing url", null)
@@ -515,20 +519,43 @@ class MainActivity : FlutterActivity() {
         try {
             val player = narrationPlayer ?: MediaPlayer().also { narrationPlayer = it }
             player.reset()
-            player.setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_MEDIA)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                    .build()
-            )
+            val audioAttrs = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_MEDIA)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                .build()
+            player.setAudioAttributes(audioAttrs)
             player.setDataSource(fullUrl)
-            player.setOnPreparedListener {
-                Log.d("MainActivity", "🗣️ Narration mp3 prepared: $fullUrl")
-                it.start()
+            player.setOnPreparedListener { mp ->
+                // Request audio focus before starting so Android's audio
+                // policy doesn't mute us. Without this, Mapbox's nav-guidance
+                // focus causes an immediate `event:muted` on our player.
+                val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                val focusReq = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                    .setAudioAttributes(audioAttrs)
+                    .build()
+                narrationFocusRequest = focusReq
+                if (am.requestAudioFocus(focusReq) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
+                    Log.d("MainActivity", "🗣️ Narration mp3 playing: $fullUrl")
+                    mp.start()
+                } else {
+                    Log.w("MainActivity", "🗣️ Audio focus denied; narration skipped")
+                }
+            }
+            player.setOnCompletionListener {
+                narrationFocusRequest?.let { req ->
+                    (getSystemService(Context.AUDIO_SERVICE) as AudioManager)
+                        .abandonAudioFocusRequest(req)
+                }
+                narrationFocusRequest = null
             }
             player.setOnErrorListener { _, what, extra ->
                 Log.e("MainActivity", "🗣️ MediaPlayer error what=$what extra=$extra url=$fullUrl")
-                true // we've handled it; player will reset on next call
+                narrationFocusRequest?.let { req ->
+                    (getSystemService(Context.AUDIO_SERVICE) as AudioManager)
+                        .abandonAudioFocusRequest(req)
+                }
+                narrationFocusRequest = null
+                true
             }
             player.prepareAsync()
             Log.d("MainActivity", "🗣️ Narration mp3 prepareAsync: $fullUrl")
