@@ -635,6 +635,11 @@ class TripPayload(BaseModel):
     days: list = Field(default_factory=list)
     notes: Optional[str] = None
     polyline: Optional[str] = None
+    # Real drive stats from the same Mapbox Directions call that produced
+    # `polyline`. See mapbox_directions.RouteGeometry. None until a
+    # polyline has been computed at least once.
+    distance_miles: Optional[float] = None
+    duration_minutes: Optional[int] = None
     # Monologue v1 vibe — see docs/companion-monologue-v1-plan.md.
     # narration_themes drives what the companion talks about; stop
     # interests drive what gets surfaced as a stop card. Defaults
@@ -664,6 +669,8 @@ def _trip_to_payload(trip: Trip) -> TripPayload:
         days=trip.days,
         notes=trip.notes,
         polyline=trip.polyline,
+        distance_miles=trip.distance_miles,
+        duration_minutes=trip.duration_minutes,
         narration_themes=trip.narration_themes,
         stop_interests=trip.stop_interests,
         created_at=trip.created_at.isoformat() if trip.created_at else None,
@@ -671,29 +678,15 @@ def _trip_to_payload(trip: Trip) -> TripPayload:
     )
 
 
-async def _compute_and_prewarm_trip(trip: Trip, interests: list[dict]) -> None:
-    """Compute the trip's driving polyline via Mapbox Directions and
-    kick off a background pre-warm of the narration cache. Persists
-    the polyline back to the Trip document so re-driving the same
-    trip skips the Directions call.
-
-    Called from POST/PUT /trips. Both Directions and the prewarm are
-    best-effort: if either fails, the trip still saves cleanly and
-    the user can still drive — they'll just hit the cold-cache path
-    at trip-start time.
+def _prewarm_for_polyline(trip: Trip, polyline: str, interests: list[dict]) -> None:
+    """Fire-and-forget the fact-prep + monologue prewarms for a trip whose
+    polyline is already known (freshly computed or supplied by the
+    client). Shared by both branches of trip creation so neither one
+    forgets a step.
     """
-    from app.services.mapbox_directions import fetch_polyline
     from app.services.fact_prep import fire_and_forget_prepare_polyline
     from app.services.monologue_pipeline import fire_and_forget_generate_monologue
 
-    polyline = await fetch_polyline(
-        trip.origin_lat, trip.origin_lng,
-        trip.destination_lat, trip.destination_lng,
-    )
-    if not polyline:
-        return
-    trip.polyline = polyline
-    await trip.save()
     fire_and_forget_prepare_polyline(
         polyline,
         user_interests=interests,
@@ -710,6 +703,33 @@ async def _compute_and_prewarm_trip(trip: Trip, interests: list[dict]) -> None:
         stop_interests=trip.stop_interests,
         label=f"trip={trip.id}",
     )
+
+
+async def _compute_and_prewarm_trip(trip: Trip, interests: list[dict]) -> None:
+    """Compute the trip's driving polyline + stats via Mapbox Directions
+    and kick off a background pre-warm of the narration cache. Persists
+    the polyline and stats back to the Trip document so re-driving the
+    same trip skips the Directions call.
+
+    Called from POST/PUT /trips when the client didn't already supply a
+    polyline (see create_trip). Both Directions and the prewarm are
+    best-effort: if either fails, the trip still saves cleanly and
+    the user can still drive — they'll just hit the cold-cache path
+    at trip-start time.
+    """
+    from app.services.mapbox_directions import fetch_route
+
+    route = await fetch_route(
+        trip.origin_lat, trip.origin_lng,
+        trip.destination_lat, trip.destination_lng,
+    )
+    if not route:
+        return
+    trip.polyline = route.polyline
+    trip.distance_miles = route.distance_miles
+    trip.duration_minutes = route.duration_minutes
+    await trip.save()
+    _prewarm_for_polyline(trip, route.polyline, interests)
 
 
 @app.post("/api/v1/trips", response_model=TripPayload)
@@ -742,14 +762,29 @@ async def create_trip(
         updated_at=now,
     )
     await trip.insert()
-    # Best-effort: compute the polyline + prewarm narration cache so
-    # the user's first drive on this trip hits a warm cache. We await
-    # the polyline compute (a single Directions call, ~200ms) so the
-    # response includes it, but the prewarm itself is fire-and-forget.
     profile = await UserProfile.find_one(UserProfile.user_id == user.id)
     interests = list(profile.interests) if profile else []
     try:
-        await _compute_and_prewarm_trip(trip, interests)
+        # If the client already paid for a Directions call (the trip
+        # preview wizard does this before the user ever taps "Create
+        # trip"), reuse that exact geometry + stats rather than
+        # recomputing — the user has already seen these numbers, and a
+        # second Directions call could return a slightly different
+        # route. `decode_polyline(...) >= 2` is just a sanity check
+        # that the string isn't garbage; it's the caller's own trip.
+        if payload.polyline and len(decode_polyline(payload.polyline)) >= 2:
+            trip.polyline = payload.polyline
+            trip.distance_miles = payload.distance_miles
+            trip.duration_minutes = payload.duration_minutes
+            await trip.save()
+            _prewarm_for_polyline(trip, payload.polyline, interests)
+        else:
+            # Best-effort: compute the polyline + prewarm narration cache
+            # so the user's first drive on this trip hits a warm cache.
+            # We await the polyline compute (a single Directions call,
+            # ~200ms) so the response includes it, but the prewarm itself
+            # is fire-and-forget.
+            await _compute_and_prewarm_trip(trip, interests)
     except Exception as e:
         logger.warning("trip prewarm failed for new trip: %s", e)
     return _trip_to_payload(trip)
@@ -1770,6 +1805,89 @@ async def route_monologue(
         utterances=doc.utterances,
         stops=doc.stops,
     )
+
+
+class PreviewStartRequest(BaseModel):
+    """Request body for POST /api/v1/route/preview. Origin/destination
+    only — no trip_id, since the trip preview wizard calls this before
+    a Trip exists at all."""
+    origin_name: str
+    origin_lat: float
+    origin_lng: float
+    destination_name: str
+    destination_lat: float
+    destination_lng: float
+
+
+class PreviewResponse(BaseModel):
+    """Server-side artifact for a route preview. `status`/`stage` let
+    the client show real progress while `rundown`/`hotspots` fill in."""
+    polyline_hash: str
+    polyline: str
+    status: str  # pending | ready | failed
+    stage: str  # routing | towns | authoring | done
+    distance_miles: float
+    duration_minutes: int
+    towns: list[dict]
+    rundown: str
+    hotspots: list[dict]
+    error: Optional[str] = None
+
+
+def _preview_to_response(doc) -> "PreviewResponse":
+    return PreviewResponse(
+        polyline_hash=doc.polyline_hash,
+        polyline=doc.polyline,
+        status=doc.status,
+        stage=doc.stage,
+        distance_miles=doc.distance_miles,
+        duration_minutes=doc.duration_minutes,
+        towns=doc.towns,
+        rundown=doc.rundown,
+        hotspots=doc.hotspots,
+        error=doc.error,
+    )
+
+
+@app.post("/api/v1/route/preview", response_model=PreviewResponse)
+async def start_route_preview(
+    body: PreviewStartRequest,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Kick off (or join, or return cached) the trip-preview artifact for
+    a route — real stats immediately, rundown + hotspots filled in by a
+    background LLM call the client polls for via GET below.
+
+    Called by the trip-creation wizard as soon as origin+destination are
+    both set, before the user has picked a vibe or named the trip.
+    """
+    from app.services.route_preview import start_preview
+
+    doc = await start_preview(
+        body.origin_lat, body.origin_lng,
+        body.destination_lat, body.destination_lng,
+        route_label=f"{body.origin_name} -> {body.destination_name}",
+    )
+    if doc is None:
+        raise HTTPException(
+            status_code=502,
+            detail="Could not compute a route for this origin/destination",
+        )
+    return _preview_to_response(doc)
+
+
+@app.get("/api/v1/route/preview/{polyline_hash}", response_model=PreviewResponse)
+async def poll_route_preview(
+    polyline_hash: str,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Poll for a preview's current state."""
+    from app.services.route_preview import get_preview
+
+    doc = await get_preview(polyline_hash)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Preview not found")
+    return _preview_to_response(doc)
 
 
 @app.get("/api/v1/audio/monologue/{text_sha256}")

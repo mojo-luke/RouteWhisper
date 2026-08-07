@@ -45,6 +45,11 @@ class Trip {
   /// Null on legacy trips created before this field existed.
   final String? polyline;
 
+  /// Real drive stats from the same Mapbox Directions call that produced
+  /// [polyline]. Null until a polyline has been computed at least once.
+  final double? distanceMiles;
+  final int? durationMinutes;
+
   /// Monologue v1 — see docs/companion-monologue-v1-plan.md.
   /// Two independent dimensions of trip vibe:
   /// - [narrationThemes] tilts what the companion talks about
@@ -78,6 +83,8 @@ class Trip {
     this.days = const [],
     this.notes,
     this.polyline,
+    this.distanceMiles,
+    this.durationMinutes,
     this.narrationThemes = const ['history'],
     this.stopInterests = const [],
     this.createdAt,
@@ -106,6 +113,8 @@ class Trip {
             .cast<Map<String, dynamic>>(),
         notes: json['notes'] as String?,
         polyline: json['polyline'] as String?,
+        distanceMiles: (json['distance_miles'] as num?)?.toDouble(),
+        durationMinutes: json['duration_minutes'] as int?,
         narrationThemes: ((json['narration_themes'] as List?) ?? const ['history'])
             .map((e) => e.toString())
             .toList(),
@@ -142,6 +151,8 @@ class Trip {
         // Server overrides on save when origin/destination change; we
         // include it here so a no-op PUT preserves the value.
         if (polyline != null) 'polyline': polyline,
+        if (distanceMiles != null) 'distance_miles': distanceMiles,
+        if (durationMinutes != null) 'duration_minutes': durationMinutes,
         'narration_themes': narrationThemes,
         'stop_interests': stopInterests,
       };
@@ -163,6 +174,9 @@ class Trip {
     List<TripPin>? pins,
     List<Map<String, dynamic>>? days,
     String? notes,
+    String? polyline,
+    double? distanceMiles,
+    int? durationMinutes,
     List<String>? narrationThemes,
     List<Map<String, dynamic>>? stopInterests,
     DateTime? createdAt,
@@ -190,6 +204,9 @@ class Trip {
         pins: pins ?? this.pins,
         days: days ?? this.days,
         notes: clearNotes ? null : (notes ?? this.notes),
+        polyline: polyline ?? this.polyline,
+        distanceMiles: distanceMiles ?? this.distanceMiles,
+        durationMinutes: durationMinutes ?? this.durationMinutes,
         narrationThemes: narrationThemes ?? this.narrationThemes,
         stopInterests: stopInterests ?? this.stopInterests,
         createdAt: createdAt ?? this.createdAt,

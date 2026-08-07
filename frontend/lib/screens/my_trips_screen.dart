@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/trip.dart';
 import '../services/trip_service.dart';
 import 'new_trip_wizard.dart';
+import 'trip_canvas_screen.dart';
 import 'trip_detail_screen.dart';
 
 /// "My Trips" — the list of trips the user has saved. Empty state on
@@ -37,15 +38,16 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
   }
 
   /// Open the new-trip wizard. On a successful create, the wizard pops
-  /// with the saved trip; we then push the detail screen so the user
-  /// keeps editing in context instead of bouncing back to the list.
+  /// with the saved trip; we then push the canvas so the user lands on
+  /// the map with the hotspot pins they picked in the reveal step,
+  /// rather than back on a form they just finished configuring.
   Future<void> _openWizard() async {
     final created = await Navigator.of(context).push<Trip>(
       MaterialPageRoute(builder: (_) => const NewTripWizardScreen()),
     );
     if (!mounted || created == null) return;
     await Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => TripDetailScreen(trip: created),
+      builder: (_) => TripCanvasScreen(trip: created),
     ));
     _refresh();
   }
@@ -132,6 +134,12 @@ class _TripTile extends StatelessWidget {
     final parts = <String>[
       '${trip.originName} → ${trip.destinationName}',
     ];
+    if (trip.distanceMiles != null && trip.durationMinutes != null) {
+      final h = trip.durationMinutes! ~/ 60;
+      final m = trip.durationMinutes! % 60;
+      final duration = h == 0 ? '$m min' : '$h hr $m min';
+      parts.add('${trip.distanceMiles!.round()} mi · $duration');
+    }
     if (trip.startDate != null) {
       parts.add(trip.startDate!);
     }

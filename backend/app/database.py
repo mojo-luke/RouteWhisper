@@ -410,6 +410,14 @@ class Trip(Document):
     # resolve to a route, or when computing failed temporarily.
     polyline: Optional[str] = None
 
+    # Real trip stats from Mapbox Directions, captured alongside
+    # `polyline` at create/update. Estimates from a traffic-free driving
+    # profile, not live — good enough for "here's about how long this
+    # is" on the trip list/detail/preview surfaces. None until a
+    # polyline has been computed at least once.
+    distance_miles: Optional[float] = None
+    duration_minutes: Optional[int] = None
+
     # Monologue v1 — see docs/companion-monologue-v1-plan.md.
     # Two dimensions of trip vibe: narration_themes shape what the
     # companion talks about; stop_interests shape what gets surfaced
@@ -488,6 +496,47 @@ class RouteMonologue(Document):
         ]
 
 
+class RoutePreview(Document):
+    """Pre-trip 'here's what this drive is' artifact, cached globally by
+    polyline_hash alone.
+
+    Deliberately NOT keyed by vibe like RouteMonologue: generation must
+    start the moment the wizard knows origin+destination, before the user
+    has picked narration themes. Hotspots carry a `theme` tag instead,
+    and the client filters/orders by the user's picks at reveal time.
+
+    Doubles as the generation lock — the doc is inserted with
+    status="pending" via an atomic upsert (find_one_and_update with
+    upsert=True); whoever wins the insert owns the LLM call, everyone
+    else just polls. See app.services.route_preview.
+    """
+    polyline_hash: str
+    polyline: str
+    route_label: str
+
+    # "pending" | "ready" | "failed"
+    status: str = "pending"
+    # "routing" | "towns" | "authoring" | "done" — drives the client's
+    # progressive reveal copy while the LLM call is in flight.
+    stage: str = "routing"
+
+    # Real trip stats from Mapbox Directions.
+    distance_miles: float = 0.0
+    duration_minutes: int = 0
+
+    towns: list[dict] = []      # [{name, lat, lng}] — from extract_towns
+    rundown: str = ""           # short prose "what to expect", second person
+    hotspots: list[dict] = []   # [{id, title, town, lat, lng, theme, blurb, detour_hint}]
+
+    error: Optional[str] = None
+    created_at: datetime = datetime.utcnow()
+    updated_at: datetime = datetime.utcnow()
+
+    class Settings:
+        name = "route_previews"
+        indexes = [[("polyline_hash", 1)]]
+
+
 class MonologueAudio(Document):
     """Pre-synthesized mp3 for a single utterance, content-addressed by
     sha256 of the utterance text.
@@ -552,6 +601,7 @@ async def init_mongodb():
             SavedFact,
             RouteMonologue,
             MonologueAudio,
+            RoutePreview,
         ],
     )
 

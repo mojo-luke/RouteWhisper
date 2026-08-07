@@ -159,5 +159,51 @@ void main() {
       expect(cleared.arrivalTime, isNull);
       expect(cleared.notes, isNull);
     });
+
+    test('copyWith preserves polyline, distanceMiles, durationMinutes '
+        'when not explicitly overridden', () {
+      // Regression test: copyWith used to have no `polyline:` parameter
+      // at all, so every copyWith call silently dropped it — e.g. the
+      // canvas's "add a pin" flow (`trip.copyWith(pins: ...)`) wiped out
+      // a trip's already-computed route every time.
+      const original = Trip(
+        name: 'T',
+        originName: 'A',
+        originLat: 0,
+        originLng: 0,
+        destinationName: 'B',
+        destinationLat: 1,
+        destinationLng: 1,
+        polyline: 'abc123polyline',
+        distanceMiles: 42.5,
+        durationMinutes: 90,
+      );
+      final updated = original.copyWith(name: 'New name');
+      expect(updated.polyline, 'abc123polyline');
+      expect(updated.distanceMiles, 42.5);
+      expect(updated.durationMinutes, 90);
+    });
+
+    test('distanceMiles/durationMinutes round-trip through JSON', () {
+      final trip = Trip.fromJson({
+        'name': 'Quick trip',
+        'origin_name': 'A',
+        'origin_lat': 0.0,
+        'origin_lng': 0.0,
+        'destination_name': 'B',
+        'destination_lat': 1.0,
+        'destination_lng': 1.0,
+        'polyline': 'xyz',
+        'distance_miles': 123.4,
+        'duration_minutes': 150,
+      });
+      expect(trip.polyline, 'xyz');
+      expect(trip.distanceMiles, 123.4);
+      expect(trip.durationMinutes, 150);
+
+      final json = trip.toJson();
+      expect(json['distance_miles'], 123.4);
+      expect(json['duration_minutes'], 150);
+    });
   });
 }

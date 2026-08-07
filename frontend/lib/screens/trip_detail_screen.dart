@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/trip.dart';
+import '../models/vibe_options.dart';
 import '../services/trip_service.dart';
 import 'trip_canvas_screen.dart';
 
@@ -266,6 +267,12 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
             const SizedBox(height: 24),
             _ReadOnlyRow(label: 'From', value: _trip.originName),
             _ReadOnlyRow(label: 'To', value: _trip.destinationName),
+            if (_trip.distanceMiles != null && _trip.durationMinutes != null)
+              _ReadOnlyRow(
+                label: 'Drive',
+                value: '${_trip.distanceMiles!.round()} mi · '
+                    '${_formatDuration(_trip.durationMinutes!)}',
+              ),
             const SizedBox(height: 8),
             const _Hint(
                 'Origin and destination editing comes with the new-trip wizard.'),
@@ -372,7 +379,7 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
             Wrap(
               spacing: 8,
               runSpacing: 8,
-              children: _narrationThemeChips
+              children: narrationThemeChips
                   .map((meta) => FilterChip(
                         label: Text(meta.label),
                         selected: _trip.narrationThemes.contains(meta.key),
@@ -446,6 +453,13 @@ DateTime? _parseIsoDate(String? iso) {
 
 String _formatIsoDate(DateTime d) =>
     '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+String _formatDuration(int minutes) {
+  final h = minutes ~/ 60;
+  final m = minutes % 60;
+  if (h == 0) return '$m min';
+  return '$h hr $m min';
+}
 
 TimeOfDay? _parseHM(String? hm) {
   if (hm == null || hm.isEmpty) return null;
@@ -565,42 +579,8 @@ class _DateRow extends StatelessWidget {
 
 
 // ---- Monologue v1 vibe controls --------------------------------------
-
-class _ThemeMeta {
-  final String key;
-  final String label;
-  const _ThemeMeta(this.key, this.label);
-}
-
-// Keep in sync with backend NarrationTheme literal in app/database.py.
-const List<_ThemeMeta> _narrationThemeChips = [
-  _ThemeMeta('history', 'History'),
-  _ThemeMeta('landscape', 'Landscape & nature'),
-  _ThemeMeta('food_culture', 'Food culture'),
-  _ThemeMeta('quirky', 'Quirky / weird'),
-];
-
-// Keep in sync with backend StopCategory literal in app/database.py.
-const List<_StopCategoryMeta> _stopCategoryChoices = [
-  _StopCategoryMeta('food', 'Food', Icons.restaurant),
-  _StopCategoryMeta('entertainment', 'Entertainment', Icons.music_note),
-  _StopCategoryMeta('attractions', 'Attractions / sights', Icons.attractions),
-  _StopCategoryMeta('shopping', 'Shopping', Icons.shopping_bag),
-];
-
-class _StopCategoryMeta {
-  final String key;
-  final String label;
-  final IconData icon;
-  const _StopCategoryMeta(this.key, this.label, this.icon);
-}
-
-_StopCategoryMeta _categoryMetaFor(String key) =>
-    _stopCategoryChoices.firstWhere(
-      (c) => c.key == key,
-      orElse: () => _stopCategoryChoices.first,
-    );
-
+// Theme/stop-category metadata lives in models/vibe_options.dart, shared
+// with the new-trip wizard.
 
 /// One row in the stop-interests list. Shows category icon + label,
 /// the detail text, and a remove button.
@@ -612,7 +592,7 @@ class _StopInterestRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final meta = _categoryMetaFor((interest['category'] ?? '') as String);
+    final meta = categoryMetaFor((interest['category'] ?? '') as String);
     final detail = (interest['detail'] ?? '') as String;
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
@@ -717,7 +697,7 @@ class _StopInterestEditorState extends State<_StopInterestEditor> {
           Wrap(
             spacing: 8,
             runSpacing: 8,
-            children: _stopCategoryChoices
+            children: stopCategoryChoices
                 .map((meta) => ChoiceChip(
                       avatar: Icon(meta.icon, size: 18),
                       label: Text(meta.label),
