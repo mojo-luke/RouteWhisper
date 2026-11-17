@@ -17,14 +17,11 @@ final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 const _supabaseUrl = String.fromEnvironment('SUPABASE_URL');
 const _supabaseAnonKey = String.fromEnvironment('SUPABASE_ANON_KEY');
 
-// Mapbox pk. token — public-facing by design (the same one shipped in
-// android/app/src/main/res/values/mapbox_access_token.xml for the
-// native Navigation SDK). pk. tokens are intended for embedding in
-// client apps; the "sk." secret tokens are the ones that stay on
-// the server. Keeping a const here is fine for v1; longer-term we
-// could move to --dart-define for the same hygiene as Supabase.
-const _mapboxAccessToken =
-    '***REMOVED-SECRET***';
+// Mapbox pk. token for the Flutter-side MapWidget — also passed via
+// --dart-define (see scripts/run.sh + .env.local). The native Navigation
+// SDK reads its own copy from the gitignored
+// android/app/src/main/res/values/mapbox_access_token.xml.
+const _mapboxAccessToken = String.fromEnvironment('MAPBOX_ACCESS_TOKEN');
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -32,6 +29,12 @@ Future<void> main() async {
     throw StateError(
       'Supabase config missing. Run with '
       '--dart-define=SUPABASE_URL=... --dart-define=SUPABASE_ANON_KEY=...',
+    );
+  }
+  if (_mapboxAccessToken.isEmpty) {
+    throw StateError(
+      'Mapbox token missing. Run with '
+      '--dart-define=MAPBOX_ACCESS_TOKEN=pk... (or use scripts/run.sh).',
     );
   }
   await Supabase.initialize(url: _supabaseUrl, anonKey: _supabaseAnonKey);

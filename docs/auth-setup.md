@@ -73,10 +73,12 @@ cd frontend
 flutter run \
   --dart-define=SUPABASE_URL=https://<your-project>.supabase.co \
   --dart-define=SUPABASE_ANON_KEY=<anon-public-key> \
-  --dart-define=GOOGLE_WEB_CLIENT_ID=<web-client-id-from-google-cloud>
+  --dart-define=GOOGLE_WEB_CLIENT_ID=<web-client-id-from-google-cloud> \
+  --dart-define=MAPBOX_ACCESS_TOKEN=<mapbox-pk-public-token>
 ```
 
-For convenience, drop these into a script. Don't commit them.
+Easiest: put these in the gitignored `frontend/.env.local` and run
+`./scripts/run.sh` (see `.env.local.example`). Don't commit them.
 
 ## 5. End-to-end smoke test
 

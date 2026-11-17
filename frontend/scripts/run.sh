@@ -28,10 +28,12 @@ set +a
 : "${SUPABASE_URL:?SUPABASE_URL not set in .env.local}"
 : "${SUPABASE_ANON_KEY:?SUPABASE_ANON_KEY not set in .env.local}"
 : "${GOOGLE_WEB_CLIENT_ID:?GOOGLE_WEB_CLIENT_ID not set in .env.local}"
+: "${MAPBOX_ACCESS_TOKEN:?MAPBOX_ACCESS_TOKEN not set in .env.local}"
 
 cd "$FRONTEND_DIR"
 exec flutter run \
   --dart-define=SUPABASE_URL="$SUPABASE_URL" \
   --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY" \
   --dart-define=GOOGLE_WEB_CLIENT_ID="$GOOGLE_WEB_CLIENT_ID" \
+  --dart-define=MAPBOX_ACCESS_TOKEN="$MAPBOX_ACCESS_TOKEN" \
   "$@"
